@@ -1,0 +1,29 @@
+Column1,Column2,Column3,Column4,Column5
+Category,For,Based On,Criteria,Documents Required
+Merit,UG/ADP,HSSC/A-Levels,>=95% or Top 3 ? 100%,HSSC Result Card / Equivalence Certificate
+Merit,UG/ADP,HSSC/A-Levels,90-94% ? 75%,HSSC Result Card / Equivalence Certificate
+Merit,UG/ADP,HSSC/A-Levels,75-89% ? 50%,HSSC Result Card / Equivalence Certificate
+Merit,UG/ADP,HSSC/A-Levels,60-74% ? 25%,HSSC Result Card / Equivalence Certificate
+Merit,UG/ADP,DAE/Diploma,>=75% ? 50%,DAE/Diploma Transcript
+Merit,UG/ADP,DAE/Diploma,60-74% ? 25%,DAE/Diploma Transcript
+Merit,MS/MPhil,Undergraduate CGPA,>=3.5 ? 25%,Undergraduate Transcript
+Alumni (SGC),UG/ADP,SGC Status,Completed HSSC from SGC ? 50%,HSSC Result Card + Verification
+Alumni (SGC),MS/MPhil,SGC Status,Completed HSSC from SGC ? 25%,HSSC Result Card + Verification
+Alumni (SU),UG/ADP,SU Status,ADP (14 years) from SU ? 25%,ADP Transcript (SU) + Verification
+Alumni (SU),UG,SU Status,16/17 years degree from SU ? 25%,Undergraduate Transcript (SU) + Verification
+Kinship,UG/ADP,Family Relation,Kin (Sibling/Parent/Spouse) ? 35%,Kin Transcript + Family Registration Certificate
+Kinship,MS/MPhil,Family Relation,Kin (Sibling/Parent/Spouse) ? 25%,Kin Transcript + Family Registration Certificate
+Women Empowerment,UG/ADP,First Female,First female in family ? 30%,Affidavit
+Women Empowerment,MS/MPhil,Widow/Single Mother,Widow or Single Mother ? 15%,NADRA Verification / Business Proof
+Sports,UG/ADP,Sports Performance,Outstanding performance ? Up to 100%,Application Form + Sports Proof
+Talent,UG/ADP,Arts & Skills,Exceptional talent in Music/Dramatics/Naat/Qirat ? Up to 100%,Application Form + Proof
+Corporate,UG/ADP,Employment,Employee of partner organization ? 30%,Employment Letter
+Corporate,UG (Evening),Working Professional,Working student ? 30%,Employment Letter
+Corporate,MS/MPhil,Employment,Employee of partner organization ? 15%,Employment Letter
+Disability,UG/ADP,Disability Status,Permanent disability ? 50%,Govt/NADRA Disability Certificate
+Martyrs,UG/ADP,Parent Status,Child/Spouse of Shaheed ? 50%,Death Certificate + Martyr Certificate
+Remote Area,UG/ADP,Residence Status,Resident of Gilgit Baltistan/AJK/Baluchistan/Sindh/KPK/Selected Punjab ? 30%,Domicile Certificate
+Govt/Forces,UG/ADP,Parent Employment,Govt employee/Teacher/Armed Forces ? 20%,Employment Certificate
+Referral,UG/PG,Referral Status,Referred by employee ? 15%,Signed Scholarship Form
+PhD,PhD,Research & Academic,2 publications + Full-time ? Fully Funded,Application + Affidavit + Publications Proof
+Loan,All Programs,Financial Need,Repay after 3-5 years,Qarz-e-Hasna documents (income/bank/property/CNIC etc.)

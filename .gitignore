@@ -1,0 +1,43 @@
+# Root-level ignores
+.venv/
+venv/
+
+# Large local model folders
+Models/
+Models traning/
+
+# Build artifacts
+**/node_modules/
+**/build/
+**/dist/
+
+# Python caches
+**/__pycache__/
+**/*.pyc
+
+# Environment files and secrets
+**/.env
+**/.env.*
+!.env.example
+
+# Runtime/local files
+backend/db.sqlite3
+backend/stt_resp.txt
+backend/dummy.txt
+backend/PROGRAM_ENDPOINTS_TODO.txt
+backend/decode_token.py
+backend/test_token.py
+backend/verify_credentials.py
+
+# Optional local docs not required for deployment
+ARCHITECTURE.md
+CONFIGURATION.md
+DOCUMENTATION.md
+PROJECT_SUMMARY.md
+QUICKSTART.md
+TROUBLESHOOTING.md
+TWILIO_SETUP.md
+
+# Local source spreadsheets if CSV is already used by app
+Programs.xlsx
+backend/Data/Programs.xlsx
