@@ -155,4 +155,17 @@ STT_PROVIDER = os.getenv('STT_PROVIDER', 'groq')
 # Groq Configuration (OpenAI-compatible API)
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_STT_MODEL = os.getenv('GROQ_STT_MODEL', 'whisper-large-v3-turbo')
-GROQ_NLU_MODEL = os.getenv('GROQ_NLU_MODEL', 'llama-3.3-70b')
+GROQ_NLU_MODEL = os.getenv('GROQ_NLU_MODEL', 'llama-3.3-70b-versatile')
+
+# Gemini Configuration
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_TRANSCRIPT_MODEL = os.getenv('GEMINI_TRANSCRIPT_MODEL', 'gemini-1.5-flash')
+
+# Botpress Chat API Configuration (for programmatic message sending)
+# These are used to authenticate with the Botpress Chat API
+BOTPRESS_BOT_ID = os.getenv('BOTPRESS_BOT_ID', '')
+BOTPRESS_CLIENT_ID = os.getenv('BOTPRESS_CLIENT_ID', '')
+BOTPRESS_API_TOKEN = os.getenv('BOTPRESS_API_TOKEN', '')
+# Chat API endpoint (fixed)
+BOTPRESS_CHAT_API_URL = 'https://api.botpress.cloud/v1/chat'
+BOTPRESS_INTEGRATION_ALIAS = os.getenv('BOTPRESS_INTEGRATION_ALIAS', '')

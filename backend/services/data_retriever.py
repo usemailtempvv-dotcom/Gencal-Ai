@@ -485,3 +485,544 @@ class ScholarshipPolicyRetriever:
             if doc and doc not in documents:
                 documents.append(doc)
         return documents
+
+
+class AdmissionPolicyRetriever:
+    """Retrieve admission policy data from CSV."""
+
+    def __init__(self, csv_path='Data/admission.csv'):
+        try:
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join('backend', csv_path)
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join(os.path.dirname(__file__), '..', csv_path)
+
+            self.df = self._read_csv_with_fallback(csv_path)
+            self.df.columns = [str(c).strip() for c in self.df.columns]
+            logger.info(f"Loaded admission CSV with {len(self.df)} rows")
+        except Exception as e:
+            logger.error(f"Failed to load admission CSV: {str(e)}")
+            self.df = pd.DataFrame()
+
+    def _read_csv_with_fallback(self, csv_path):
+        last_error = None
+        for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
+            try:
+                return pd.read_csv(csv_path, encoding=enc)
+            except Exception as e:
+                last_error = e
+        raise last_error
+
+    def get_row(self):
+        if self.df.empty:
+            return None
+        return self.df.iloc[0].to_dict()
+
+    def get_summary(self):
+        row = self.get_row()
+        if not row:
+            return None
+        return {
+            'university': row.get('University', 'Unknown'),
+            'admission_open': row.get('Admission_Open', 'Unknown'),
+            'intakes': row.get('Intakes', 'Unknown'),
+            'application_mode': row.get('Application_Mode', 'Unknown'),
+            'entry_test': row.get('Entry_Test', 'Unknown'),
+            'interview': row.get('Interview', 'Unknown'),
+            'minimum_qualification': row.get('Minimum_Qualification', 'Unknown'),
+            'minimum_marks': row.get('Minimum_Marks', 'Unknown'),
+            'admission_confirmation': row.get('Admission_Confirmation', 'Unknown'),
+            'required_documents': row.get('Required_Documents', 'Unknown'),
+        }
+
+    def get_deadlines(self):
+        row = self.get_row()
+        if not row:
+            return None
+        return {
+            'spring_start': row.get('Spring_Admission_Start', 'Unknown'),
+            'spring_last_date': row.get('Spring_Last_Date', 'Unknown'),
+            'spring_deadline_message': row.get('Spring_Deadline_Message', 'Unknown'),
+            'fall_start': row.get('Fall_Admission_Start', 'Unknown'),
+            'fall_last_date': row.get('Fall_Last_Date', 'Unknown'),
+            'fall_deadline_message': row.get('Fall_Deadline_Message', 'Unknown'),
+        }
+
+    def get_process(self):
+        row = self.get_row()
+        if not row:
+            return None
+        return {
+            'application_mode': row.get('Application_Mode', 'Unknown'),
+            'application_mode_details': row.get('Application_Mode_Details', 'Unknown'),
+            'admission_process': row.get('Admission_Process', 'Unknown'),
+            'admission_process_details': row.get('Admission_Process_Details', 'Unknown'),
+            'admission_confirmation': row.get('Admission_Confirmation', 'Unknown'),
+            'confirmation_details': row.get('Confirmation_Details', 'Unknown'),
+        }
+
+    def get_eligibility(self):
+        row = self.get_row()
+        if not row:
+            return None
+        return {
+            'minimum_qualification': row.get('Minimum_Qualification', 'Unknown'),
+            'minimum_marks': row.get('Minimum_Marks', 'Unknown'),
+            'eligibility_details': row.get('Eligibility_Details', 'Unknown'),
+            'entry_test': row.get('Entry_Test', 'Unknown'),
+            'entry_test_type': row.get('Entry_Test_Type', 'Unknown'),
+            'entry_test_difficulty': row.get('Entry_Test_Difficulty', 'Unknown'),
+            'interview': row.get('Interview', 'Unknown'),
+            'interview_details': row.get('Interview_Details', 'Unknown'),
+        }
+
+    def get_documents(self):
+        row = self.get_row()
+        if not row:
+            return []
+        docs = str(row.get('Required_Documents', '') or '')
+        return [item.strip() for item in re.split(r'[;,]', docs) if item.strip()]
+
+    def get_notes(self):
+        row = self.get_row()
+        if not row:
+            return None
+        return {
+            'student_advice': row.get('Student_Advice', 'Unknown'),
+            'general_notes': row.get('General_Notes', 'Unknown'),
+        }
+
+
+class CampusesInfoRetriever:
+    """Retrieve campus information data from CSV."""
+
+    def __init__(self, csv_path='Data/Campuses_info.csv'):
+        try:
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join('backend', csv_path)
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join(os.path.dirname(__file__), '..', csv_path)
+
+            self.df = self._read_csv_with_fallback(csv_path)
+            self.df.columns = [str(c).strip() for c in self.df.columns]
+            logger.info(f"Loaded campuses CSV with {len(self.df)} campuses")
+        except Exception as e:
+            logger.error(f"Failed to load campuses CSV: {str(e)}")
+            self.df = pd.DataFrame()
+
+    def _read_csv_with_fallback(self, csv_path):
+        import csv
+        last_error = None
+        for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
+            try:
+                # Try normal pandas read first with robustness options
+                try:
+                    df = pd.read_csv(csv_path, encoding=enc, on_bad_lines='skip')
+                    # Check if headers were parsed correctly
+                    if df.shape[1] >= 6:
+                        return df
+                except:
+                    pass
+                
+                # If normal parsing fails, try custom parsing
+                with open(csv_path, 'r', encoding=enc) as f:
+                    reader = csv.reader(f, quotechar='"', skipinitialspace=True)
+                    rows = []
+                    for row in reader:
+                        if row:  # Skip empty rows
+                            rows.append(row)
+                
+                if rows:
+                    # First row is headers
+                    headers = [h.strip() for h in rows[0]]
+                    # Remaining rows are data
+                    data_rows = []
+                    for row in rows[1:]:
+                        if len(row) <= len(headers):
+                            data_rows.append([v.strip() for v in row])
+                        else:
+                            # If row has more columns, merge extra into last column
+                            trimmed = row[:len(headers)-1] + [','.join(row[len(headers)-1:])]
+                            data_rows.append([v.strip() for v in trimmed])
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame(data_rows, columns=headers)
+                    return df
+                    
+            except Exception as e:
+                last_error = e
+        
+        raise last_error if last_error else Exception("Could not parse CSV file")
+
+    def get_all_campuses(self):
+        """Get all campus names."""
+        if self.df.empty:
+            return []
+        return self.df['campus_name'].unique().tolist()
+
+    def get_campus_by_name(self, campus_name):
+        """Get full campus details by name."""
+        if self.df.empty:
+            return None
+        
+        query = self.df[self.df['campus_name'].str.strip().str.lower() == campus_name.strip().lower()]
+        if query.empty:
+            return None
+        
+        row = query.iloc[0]
+        return {
+            'campus_name': row['campus_name'],
+            'location': row['location'],
+            'focus': row['focus'],
+            'phone': row['phone'],
+            'uan': row['uan'],
+            'email': row.get('email', ''),
+        }
+
+    def get_all_campuses_summary(self):
+        """Get summary of all campuses."""
+        if self.df.empty:
+            return []
+        
+        results = []
+        for _, row in self.df.iterrows():
+            results.append({
+                'campus_name': row['campus_name'],
+                'location': row['location'],
+                'focus': row['focus'],
+            })
+        return results
+
+    def search_campuses(self, query):
+        """Search campuses by keyword (name, location, focus)."""
+        if self.df.empty:
+            return []
+        
+        query_lower = query.lower()
+        results = []
+        
+        for _, row in self.df.iterrows():
+            campus_lower = row['campus_name'].lower()
+            location_lower = row['location'].lower()
+            focus_lower = row['focus'].lower()
+            
+            if query_lower in campus_lower or query_lower in location_lower or query_lower in focus_lower:
+                results.append({
+                    'campus_name': row['campus_name'],
+                    'location': row['location'],
+                    'focus': row['focus'],
+                    'phone': row['phone'],
+                })
+        
+        return results
+
+    def get_campus_contact(self, campus_name):
+        """Get contact info for a campus."""
+        campus = self.get_campus_by_name(campus_name)
+        if not campus:
+            return None
+        
+        return {
+            'campus_name': campus['campus_name'],
+            'phone': campus['phone'],
+            'uan': campus['uan'],
+            'email': campus['email'],
+        }
+
+
+class FacilitiesRetriever:
+    """Retrieve facilities information data from CSV."""
+
+    @staticmethod
+    def _safe_text(value):
+        """Convert NaN/None values to empty strings for JSON-safe responses."""
+        if pd.isna(value):
+            return ''
+        return str(value).strip()
+
+    def __init__(self, csv_path='Data/Facilities.csv'):
+        try:
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join('backend', csv_path)
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join(os.path.dirname(__file__), '..', csv_path)
+
+            self.df = self._read_csv_with_fallback(csv_path)
+            self.df.columns = [str(c).strip() for c in self.df.columns]
+            logger.info(f"Loaded facilities CSV with {len(self.df)} facilities")
+        except Exception as e:
+            logger.error(f"Failed to load facilities CSV: {str(e)}")
+            self.df = pd.DataFrame()
+
+    def _read_csv_with_fallback(self, csv_path):
+        import csv
+        last_error = None
+        for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
+            try:
+                # Try normal pandas read first with robustness options
+                try:
+                    df = pd.read_csv(csv_path, encoding=enc, on_bad_lines='skip')
+                    # Check if headers were parsed correctly (should have 4 columns)
+                    if df.shape[1] >= 4:
+                        return df
+                except:
+                    pass
+                
+                # If normal parsing fails, try custom parsing
+                with open(csv_path, 'r', encoding=enc) as f:
+                    reader = csv.reader(f, quotechar='"', skipinitialspace=True)
+                    rows = []
+                    for row in reader:
+                        if row:  # Skip empty rows
+                            rows.append(row)
+                
+                if rows:
+                    # First row is headers
+                    headers = [h.strip() for h in rows[0]]
+                    # Remaining rows are data
+                    data_rows = []
+                    for row in rows[1:]:
+                        if len(row) <= len(headers):
+                            data_rows.append([v.strip() for v in row])
+                        else:
+                            # If row has more columns, merge extra into last column
+                            trimmed = row[:len(headers)-1] + [','.join(row[len(headers)-1:])]
+                            data_rows.append([v.strip() for v in trimmed])
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame(data_rows, columns=headers)
+                    return df
+                    
+            except Exception as e:
+                last_error = e
+        
+        raise last_error if last_error else Exception("Could not parse CSV file")
+
+    def get_all_categories(self):
+        """Get all facility categories."""
+        if self.df.empty:
+            return []
+        return self.df['category'].unique().tolist()
+
+    def get_facilities_by_category(self, category):
+        """Get all facilities in a category."""
+        if self.df.empty:
+            return []
+        
+        filtered = self.df[self.df['category'].str.strip().str.lower() == category.strip().lower()]
+        
+        results = []
+        for _, row in filtered.iterrows():
+            results.append({
+                'facility_name': self._safe_text(row.get('facility_name')),
+                'feature': self._safe_text(row.get('feature')),
+                'details': self._safe_text(row.get('details')),
+            })
+        return results
+
+    def get_all_facilities_summary(self):
+        """Get summary of all facilities."""
+        if self.df.empty:
+            return []
+        
+        results = []
+        for _, row in self.df.iterrows():
+            results.append({
+                'category': self._safe_text(row.get('category')),
+                'facility_name': self._safe_text(row.get('facility_name')),
+                'feature': self._safe_text(row.get('feature')),
+            })
+        return results
+
+    def search_facilities(self, query):
+        """Search facilities by keyword."""
+        if self.df.empty:
+            return []
+        
+        query_lower = query.lower()
+        results = []
+        
+        for _, row in self.df.iterrows():
+            facility_name = self._safe_text(row.get('facility_name'))
+            feature = self._safe_text(row.get('feature'))
+            details = self._safe_text(row.get('details'))
+            category = self._safe_text(row.get('category'))
+
+            facility_lower = facility_name.lower()
+            feature_lower = feature.lower()
+            details_lower = details.lower()
+            
+            if query_lower in facility_lower or query_lower in feature_lower or query_lower in details_lower:
+                results.append({
+                    'category': category,
+                    'facility_name': facility_name,
+                    'feature': feature,
+                    'details': details,
+                })
+        
+        return results
+
+    def get_facility_by_name(self, facility_name):
+        """Get full details for a specific facility."""
+        if self.df.empty:
+            return None
+        
+        query = self.df[self.df['facility_name'].str.strip().str.lower() == facility_name.strip().lower()]
+        if query.empty:
+            return None
+        
+        row = query.iloc[0]
+        return {
+            'category': self._safe_text(row.get('category')),
+            'facility_name': self._safe_text(row.get('facility_name')),
+            'feature': self._safe_text(row.get('feature')),
+            'details': self._safe_text(row.get('details')),
+        }
+
+
+class HostalRetriever:
+    """Retrieve hostel/accommodation information data from CSV."""
+
+    def __init__(self, csv_path='Data/hostal.csv'):
+        try:
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join('backend', csv_path)
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join(os.path.dirname(__file__), '..', csv_path)
+
+            self.df = self._read_csv_with_fallback(csv_path)
+            self.df.columns = [str(c).strip() for c in self.df.columns]
+            logger.info(f"Loaded hostel CSV with {len(self.df)} hostel details")
+        except Exception as e:
+            logger.error(f"Failed to load hostel CSV: {str(e)}")
+            self.df = pd.DataFrame()
+
+    def _read_csv_with_fallback(self, csv_path):
+        import csv
+        last_error = None
+        for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
+            try:
+                # Try normal pandas read first with robustness options
+                try:
+                    df = pd.read_csv(csv_path, encoding=enc, on_bad_lines='skip')
+                    # Check if headers were parsed correctly (should have 4 columns)
+                    if df.shape[1] >= 4:
+                        return df
+                except:
+                    pass
+                
+                # If normal parsing fails, try custom parsing
+                with open(csv_path, 'r', encoding=enc) as f:
+                    reader = csv.reader(f, quotechar='"', skipinitialspace=True)
+                    rows = []
+                    for row in reader:
+                        if row:  # Skip empty rows
+                            rows.append(row)
+                
+                if rows:
+                    # First row is headers
+                    headers = [h.strip() for h in rows[0]]
+                    # Remaining rows are data
+                    data_rows = []
+                    for row in rows[1:]:
+                        if len(row) <= len(headers):
+                            data_rows.append([v.strip() for v in row])
+                        else:
+                            # If row has more columns, merge extra into last column
+                            trimmed = row[:len(headers)-1] + [','.join(row[len(headers)-1:])]
+                            data_rows.append([v.strip() for v in trimmed])
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame(data_rows, columns=headers)
+                    return df
+                    
+            except Exception as e:
+                last_error = e
+        
+        raise last_error if last_error else Exception("Could not parse CSV file")
+
+    def get_all_categories(self):
+        """Get all hostel categories."""
+        if self.df.empty:
+            return []
+        return self.df['category'].unique().tolist()
+
+    def get_details_by_category(self, category):
+        """Get all details in a category."""
+        if self.df.empty:
+            return []
+        
+        filtered = self.df[self.df['category'].str.strip().str.lower() == category.strip().lower()]
+        
+        results = []
+        for _, row in filtered.iterrows():
+            results.append({
+                'sub_category': row.get('sub_category', ''),
+                'feature': row['feature'],
+                'details': row['details'],
+            })
+        return results
+
+    def get_all_hostel_details(self):
+        """Get all hostel information."""
+        if self.df.empty:
+            return []
+        
+        results = []
+        for _, row in self.df.iterrows():
+            results.append({
+                'category': row['category'],
+                'sub_category': row.get('sub_category', ''),
+                'feature': row['feature'],
+                'details': row['details'],
+            })
+        return results
+
+    def search_hostel_info(self, query):
+        """Search hostel information by keyword."""
+        if self.df.empty:
+            return []
+        
+        query_lower = str(query or '').lower()
+        query_tokens = set(re.findall(r'[a-z0-9]+', query_lower))
+        results = []
+        
+        for _, row in self.df.iterrows():
+            category_lower = row['category'].lower()
+            sub_category_lower = row.get('sub_category', '').lower()
+            feature_lower = str(row['feature']).lower()
+            details_lower = str(row['details']).lower()
+            haystack = f"{category_lower} {sub_category_lower} {feature_lower} {details_lower}"
+            haystack_tokens = set(re.findall(r'[a-z0-9]+', haystack))
+            
+            if (
+                query_lower in haystack
+                or bool(query_tokens & haystack_tokens)
+                or any(token in haystack for token in query_tokens if len(token) > 2)
+            ):
+                results.append({
+                    'category': row['category'],
+                    'sub_category': row.get('sub_category', ''),
+                    'feature': row['feature'],
+                    'details': row['details'],
+                })
+        
+        return results
+
+    def get_accommodation_overview(self):
+        """Get overview of accommodation features."""
+        if self.df.empty:
+            return {}
+        
+        overview = {}
+        for _, row in self.df.iterrows():
+            category = row['category']
+            if category not in overview:
+                overview[category] = []
+            
+            overview[category].append({
+                'feature': row['feature'],
+                'details': row['details'],
+            })
+        
+        return overview

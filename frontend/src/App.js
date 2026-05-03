@@ -25,6 +25,14 @@ function App() {
   const [sttIntent, setSttIntent] = useState(null);
   const [sttEmotion, setSttEmotion] = useState(null);
   const [sttError, setSttError] = useState('');
+  const [answerMeta, setAnswerMeta] = useState({
+    answerSource: '',
+    answerSourceConfidence: null,
+    adminVerified: false,
+    responseTimeMs: null,
+    detectedIntent: '',
+    messageSource: '',
+  });
   const [programQuery, setProgramQuery] = useState(null);
   const [naturalResponse, setNaturalResponse] = useState('');
   const [programInput, setProgramInput] = useState('');
@@ -65,7 +73,7 @@ function App() {
   const checkBackendStatus = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/test/');
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Backend test endpoint returned non-JSON');
       setBackendStatus(data.twilio_configured ? 'ready' : 'not-configured');
     } catch (error) {
       console.error('Backend check failed:', error);
@@ -79,7 +87,7 @@ function App() {
   const fetchCallLogs = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/call_logs/');
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Call logs endpoint returned non-JSON');
       setCallLogs(data.calls || []);
     } catch (error) {
       console.error('Failed to fetch call logs:', error);
@@ -106,7 +114,7 @@ function App() {
         throw new Error(`Server returned ${response.status}`);
       }
       
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Token endpoint returned non-JSON');
       console.log('✓ Token received, length:', data.token ? data.token.length : 0);
       setTwilioToken(data.token);
       return data.token;
@@ -122,6 +130,58 @@ function App() {
       return 'en';
     }
     return /[\u0600-\u06FF]/.test(text) ? 'ur' : 'en';
+  };
+
+  const formatResponseTime = (durationMs) => {
+    if (typeof durationMs !== 'number' || Number.isNaN(durationMs) || durationMs < 0) {
+      return null;
+    }
+
+    if (durationMs < 1000) {
+      return `${Math.round(durationMs)} ms`;
+    }
+
+    return `${(durationMs / 1000).toFixed(2)} s`;
+  };
+
+  const formatIntentLabel = (intentValue) => {
+    if (!intentValue) {
+      return '';
+    }
+
+    if (typeof intentValue === 'string') {
+      return intentValue;
+    }
+
+    if (typeof intentValue === 'object') {
+      const label = intentValue.label || intentValue.intent || intentValue.name || '';
+      const confidence = typeof intentValue.confidence === 'number' ? Math.round(intentValue.confidence * 100) : null;
+      return confidence !== null && label ? `${label} (${confidence}%)` : label;
+    }
+
+    return String(intentValue);
+  };
+
+  const buildNoAnswerMessage = (queryText) => {
+    const trimmedQuery = (queryText || '').trim();
+    if (trimmedQuery) {
+      return `I could not find a direct answer for "${trimmedQuery}". Please rephrase it or ask about fee, duration, admission, or scholarship.`;
+    }
+
+    return 'I could not find a direct answer. Please rephrase your question or ask about fee, duration, admission, or scholarship.';
+  };
+
+  const parseJsonResponse = async (response, fallbackMessage) => {
+    const rawBody = await response.text();
+    try {
+      return JSON.parse(rawBody || '{}');
+    } catch (error) {
+      const snippet = (rawBody || '').slice(0, 120).replace(/\s+/g, ' ').trim();
+      const message = snippet
+        ? `${fallbackMessage} (status ${response.status}). Response starts with: ${snippet}`
+        : `${fallbackMessage} (status ${response.status}).`;
+      throw new Error(message);
+    }
   };
 
   const speakAnswer = async (answerText, languageHint = null) => {
@@ -148,7 +208,7 @@ function App() {
       if (!response.ok) {
         let errorMessage = 'Text-to-speech failed';
         try {
-          const data = await response.json();
+          const data = await parseJsonResponse(response, 'Text-to-speech endpoint returned non-JSON');
           errorMessage = data.error || errorMessage;
         } catch (error) {
           errorMessage = `Text-to-speech failed (${response.status})`;
@@ -185,6 +245,7 @@ function App() {
     try {
       setSttLoading(true);
       setSttError('');
+      const requestStart = performance.now();
 
       const formData = new FormData();
       formData.append('file', audioBlob, 'speech.webm');
@@ -217,22 +278,33 @@ function App() {
       setSttRomanUrdu(data.roman_urdu || '');
       setSttIntent(data.intent || null);
       setSttEmotion(data.emotion || null);
-      const resolvedProgramQuery = data.program_query || data.scholarship_query || (data.program_data || data.scholarship_data || data.natural_response
+      const responseTimeMs = performance.now() - requestStart;
+      const resolvedProgramQuery = data.program_query || data.scholarship_query || data.admission_query || (data.program_data || data.scholarship_data || data.admission_data || data.natural_response
         ? {
-            program_data: data.program_data || data.scholarship_data || null,
+            program_data: data.program_data || data.scholarship_data || data.admission_data || null,
             scholarship_data: data.scholarship_data || null,
+            admission_data: data.admission_data || null,
             natural_response: data.natural_response || '',
             program_name: data.program_name || '',
             level: data.level || '',
             faculty: data.program_faculty || data.faculty || '',
             scholarship_category: data.scholarship_category || '',
+            admission_summary: data.admission_data || null,
             follow_up: data.follow_up || null,
           }
         : null);
 
       setProgramQuery(resolvedProgramQuery);
-      const answerText = data.natural_response || resolvedProgramQuery?.natural_response || '';
+      const answerText = data.natural_response || (resolvedProgramQuery && resolvedProgramQuery.natural_response) || data.natural_response_raw || (data.found === false ? buildNoAnswerMessage(data.text || sttText) : '');
       setNaturalResponse(answerText);
+      setAnswerMeta({
+        answerSource: data.answer_source || 'unknown',
+        answerSourceConfidence: typeof data.answer_source_confidence === 'number' ? data.answer_source_confidence : null,
+        adminVerified: Boolean(data.admin_verified),
+        responseTimeMs,
+        detectedIntent: formatIntentLabel(data.intent || data.intent_used || ''),
+        messageSource: 'Microphone transcript',
+      });
       if (answerText) {
         const ttsLang = data.detected_language || detectAnswerLanguage(answerText);
         await speakAnswer(answerText, ttsLang);
@@ -258,34 +330,47 @@ function App() {
     try {
       setProgramLoading(true);
       setProgramError('');
+      const requestStart = performance.now();
 
       const formData = new FormData();
       formData.append('query', query);
-      formData.append('emotion', sttEmotion?.label || 'neutral');
+      formData.append('emotion', (sttEmotion && sttEmotion.label) || 'neutral');
 
       const response = await fetch('http://localhost:8000/api/program_query/', {
         method: 'POST',
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await parseJsonResponse(response, 'Program query endpoint returned non-JSON');
       if (!response.ok) {
         throw new Error(data.error || 'Program query failed');
       }
 
+      const responseTimeMs = performance.now() - requestStart;
+
       setProgramQuery({
         program_data: data.program_data || null,
         scholarship_data: data.scholarship_data || null,
+        admission_data: data.admission_data || null,
         natural_response: data.natural_response || '',
         program_name: data.program_name || '',
         level: data.level || '',
         faculty: data.faculty || '',
         scholarship_category: data.scholarship_category || '',
+        admission_summary: data.admission_data || null,
         follow_up: data.follow_up || null,
         intent_used: data.intent || '',
       });
-      const answerText = data.natural_response || '';
+      const answerText = data.natural_response || data.natural_response_raw || (data.found === false ? buildNoAnswerMessage(query) : '');
       setNaturalResponse(answerText);
+      setAnswerMeta({
+        answerSource: data.answer_source || 'unknown',
+        answerSourceConfidence: typeof data.answer_source_confidence === 'number' ? data.answer_source_confidence : null,
+        adminVerified: Boolean(data.admin_verified),
+        responseTimeMs,
+        detectedIntent: formatIntentLabel(data.intent || data.intent_used || ''),
+        messageSource: 'Typed question',
+      });
       if (answerText) {
         await speakAnswer(answerText, detectAnswerLanguage(answerText));
       }
@@ -425,6 +510,14 @@ function App() {
       setSttRomanUrdu('');
       setSttIntent(null);
       setSttEmotion(null);
+      setAnswerMeta({
+        answerSource: '',
+        answerSourceConfidence: null,
+        adminVerified: false,
+        responseTimeMs: null,
+        detectedIntent: '',
+        messageSource: '',
+      });
       setProgramQuery(null);
       setNaturalResponse('');
     } catch (error) {
@@ -506,6 +599,34 @@ function App() {
               <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#1b5e20', lineHeight: '1.6', marginBottom: '12px' }}>
                 {naturalResponse}
               </p>
+              {(answerMeta.answerSource || answerMeta.responseTimeMs !== null) && (
+                <div style={{
+                  marginBottom: '12px',
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: '#f1f8f4',
+                  border: '1px solid #c8e6c9',
+                  fontSize: '13px',
+                  color: '#2e7d32',
+                }}>
+                  {answerMeta.answerSource && (
+                    <p style={{ margin: '4px 0' }}><strong>Source:</strong> {answerMeta.answerSource}</p>
+                  )}
+                  {answerMeta.messageSource && (
+                    <p style={{ margin: '4px 0' }}><strong>Message source:</strong> {answerMeta.messageSource}</p>
+                  )}
+                  {answerMeta.detectedIntent && (
+                    <p style={{ margin: '4px 0' }}><strong>Detected intent:</strong> {answerMeta.detectedIntent}</p>
+                  )}
+                  {typeof answerMeta.answerSourceConfidence === 'number' && (
+                    <p style={{ margin: '4px 0' }}><strong>Confidence:</strong> {Math.round(answerMeta.answerSourceConfidence * 100)}%</p>
+                  )}
+                  <p style={{ margin: '4px 0' }}><strong>Admin verified:</strong> {answerMeta.adminVerified ? 'Yes' : 'No'}</p>
+                  {formatResponseTime(answerMeta.responseTimeMs) && (
+                    <p style={{ margin: '4px 0' }}><strong>Time taken:</strong> {formatResponseTime(answerMeta.responseTimeMs)}</p>
+                  )}
+                </div>
+              )}
               <button
                 className="btn btn-success"
                 onClick={() => speakAnswer(naturalResponse, detectAnswerLanguage(naturalResponse))}
@@ -514,7 +635,7 @@ function App() {
               >
                 {ttsLoading ? '🔊 Speaking...' : '🔊 Speak Answer'}
               </button>
-              {programQuery?.program_data && (
+              {programQuery && programQuery.program_data && (
                 <div style={{ marginTop: '15px', fontSize: '14px', color: '#333', backgroundColor: '#f1f8f4', padding: '12px', borderRadius: '4px' }}>
                   {programQuery.program_data.program && (
                     <p style={{ margin: '6px 0' }}><strong>🎓 Program:</strong> {programQuery.program_data.program}</p>
@@ -587,9 +708,44 @@ function App() {
                       </ul>
                     </div>
                   )}
+                  {programQuery.admission_data && !Array.isArray(programQuery.admission_data) && (
+                    <div style={{ marginTop: '8px' }}>
+                      <p style={{ margin: '6px 0' }}><strong>🏫 University:</strong> {programQuery.admission_data.university || 'N/A'}</p>
+                      {programQuery.admission_data.admission_open !== undefined && (
+                        <p style={{ margin: '6px 0' }}><strong>📢 Admission Open:</strong> {programQuery.admission_data.admission_open}</p>
+                      )}
+                      {programQuery.admission_data.intakes && (
+                        <p style={{ margin: '6px 0' }}><strong>🗓️ Intakes:</strong> {programQuery.admission_data.intakes}</p>
+                      )}
+                      {programQuery.admission_data.required_documents && (
+                        <div style={{ marginTop: '8px' }}>
+                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>📄 Required Documents:</p>
+                          <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
+                            {programQuery.admission_data.required_documents.map((doc) => (
+                              <li key={doc}>{doc}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {programQuery.admission_data.deadlines && (
+                        <div style={{ marginTop: '8px' }}>
+                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>⏳ Deadlines:</p>
+                          <p style={{ margin: '6px 0' }}>Spring: {programQuery.admission_data.deadlines.spring_last_date || 'N/A'}</p>
+                          <p style={{ margin: '6px 0' }}>Fall: {programQuery.admission_data.deadlines.fall_last_date || 'N/A'}</p>
+                        </div>
+                      )}
+                      {programQuery.admission_data.eligibility && (
+                        <div style={{ marginTop: '8px' }}>
+                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>✅ Eligibility:</p>
+                          <p style={{ margin: '6px 0' }}>Qualification: {programQuery.admission_data.eligibility.minimum_qualification || 'N/A'}</p>
+                          <p style={{ margin: '6px 0' }}>Marks: {programQuery.admission_data.eligibility.minimum_marks || 'N/A'}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
-              {programQuery?.follow_up && (
+              {programQuery && programQuery.follow_up && (
                 <div style={{ marginTop: '10px', padding: '10px', background: '#fff8e1', borderLeft: '4px solid #ffb300', borderRadius: '4px' }}>
                   <strong>Next Step:</strong> {programQuery.follow_up.type === 'choose_level' && 'Please choose one level: Associate, Undergraduate, or Postgraduate.'}
                   {programQuery.follow_up.type === 'choose_faculty' && 'Please choose a faculty from the list above.'}
@@ -618,8 +774,7 @@ function App() {
               )}
               {sttIntent && (
                 <p>
-                  <strong>Intent:</strong> {sttIntent.label || 'unknown'}
-                  {typeof sttIntent.confidence === 'number' ? ` (${Math.round(sttIntent.confidence * 100)}%)` : ''}
+                  <strong>Intent:</strong> {formatIntentLabel(sttIntent) || 'unknown'}
                 </p>
               )}
               {sttEmotion && (

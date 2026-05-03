@@ -326,3 +326,97 @@ This is a {level.lower()} program offered under the {faculty} faculty.
             f"There are {summary.get('policy_count', 0)} scholarship policy entries{level_text} "
             f"across {summary.get('category_count', 0)} scholarship categories."
         )
+
+    def format_admission_summary(self, summary):
+        if not summary:
+            return "Sorry, I couldn't find admission information right now."
+
+        response = (
+            f"Admission status for {summary.get('university', 'the university')} is {summary.get('admission_open', 'Unknown')}.\n\n"
+            f"Intakes: {summary.get('intakes', 'N/A')}\n"
+            f"Application Mode: {summary.get('application_mode', 'N/A')}\n"
+            f"Entry Test: {summary.get('entry_test', 'N/A')}\n"
+            f"Interview: {summary.get('interview', 'N/A')}\n"
+            f"Minimum Qualification: {summary.get('minimum_qualification', 'N/A')}\n"
+            f"Minimum Marks: {summary.get('minimum_marks', 'N/A')}\n"
+            f"Admission Confirmation: {summary.get('admission_confirmation', 'N/A')}"
+        )
+        return response.strip()
+
+    def format_admission_deadlines(self, deadlines):
+        if not deadlines:
+            return "Sorry, I couldn't find admission deadlines right now."
+
+        return (
+            f"🎯 **Admission Deadlines:**\n\n"
+            f"Spring Admission Start: {deadlines.get('spring_start', 'N/A')}\n"
+            f"Spring Last Date: {deadlines.get('spring_last_date', 'N/A')}\n"
+            f"Spring Note: {deadlines.get('spring_deadline_message', 'N/A')}\n\n"
+            f"Fall Admission Start: {deadlines.get('fall_start', 'N/A')}\n"
+            f"Fall Last Date: {deadlines.get('fall_last_date', 'N/A')}\n"
+            f"Fall Note: {deadlines.get('fall_deadline_message', 'N/A')}"
+        )
+
+    def format_admission_documents(self, documents):
+        if not documents:
+            return "Sorry, I couldn't find required admission documents right now."
+
+        response = "📄 **Required Documents:**\n\n"
+        for idx, document in enumerate(documents, 1):
+            response += f"{idx}. {document}\n"
+        return response.strip()
+
+    def format_admission_process(self, process):
+        if not process:
+            return "Sorry, I couldn't find the admission process right now."
+
+        return (
+            f"🧭 **Admission Process:**\n\n"
+            f"Application Mode: {process.get('application_mode', 'N/A')}\n"
+            f"Details: {process.get('application_mode_details', 'N/A')}\n\n"
+            f"Process: {process.get('admission_process', 'N/A')}\n"
+            f"Process Details: {process.get('admission_process_details', 'N/A')}\n\n"
+            f"Confirmation: {process.get('admission_confirmation', 'N/A')}\n"
+            f"Confirmation Details: {process.get('confirmation_details', 'N/A')}"
+        )
+
+    def format_admission_eligibility(self, eligibility):
+        if not eligibility:
+            return "Sorry, I couldn't find eligibility information right now."
+
+        return (
+            f"✅ **Eligibility:**\n\n"
+            f"Minimum Qualification: {eligibility.get('minimum_qualification', 'N/A')}\n"
+            f"Minimum Marks: {eligibility.get('minimum_marks', 'N/A')}\n"
+            f"Eligibility Details: {eligibility.get('eligibility_details', 'N/A')}\n\n"
+            f"Entry Test: {eligibility.get('entry_test', 'N/A')}\n"
+            f"Test Type: {eligibility.get('entry_test_type', 'N/A')}\n"
+            f"Test Difficulty: {eligibility.get('entry_test_difficulty', 'N/A')}\n"
+            f"Interview: {eligibility.get('interview', 'N/A')}\n"
+            f"Interview Details: {eligibility.get('interview_details', 'N/A')}"
+        )
+
+    def format_admission_notes(self, notes):
+        if not notes:
+            return ""
+
+        return (
+            f"💡 **Student Advice:** {notes.get('student_advice', 'N/A')}\n\n"
+            f"📝 **General Notes:** {notes.get('general_notes', 'N/A')}"
+        )
+
+    def format_full_admission_info(self, summary, deadlines, process, eligibility, documents, notes):
+        sections = []
+        if summary:
+            sections.append(self.format_admission_summary(summary))
+        if deadlines:
+            sections.append(self.format_admission_deadlines(deadlines))
+        if process:
+            sections.append(self.format_admission_process(process))
+        if eligibility:
+            sections.append(self.format_admission_eligibility(eligibility))
+        if documents:
+            sections.append(self.format_admission_documents(documents))
+        if notes:
+            sections.append(self.format_admission_notes(notes))
+        return "\n\n".join([section for section in sections if section]).strip() or "Sorry, I couldn't find admission information right now."
