@@ -1,177 +1,117 @@
-/**
- * Main App component for GenCall AI
- * This is the root component that manages the entire application
- */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
-import Dashboard from './components/Dashboard';
-import TwilioClient from './components/TwilioClient';
-import CallLogs from './components/CallLogs';
+import DashboardNew from './components/DashboardNew';
+import AdminApp from './admin/AdminApp';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+import { supabase, useAuth } from './contexts/AuthContext';
+
+const SILENCE_TIMEOUT_MS = 1600;
+const MIN_VALID_TEXT_LENGTH = 3;
+const ADMIN_SESSION_KEY = 'admin_authenticated';
 
 function App() {
-  const [backendStatus, setBackendStatus] = useState('checking');
-  const [twilioToken, setTwilioToken] = useState(null);
-  const [callStatus, setCallStatus] = useState('idle');
-  const [incomingCall, setIncomingCall] = useState(null);
-  const [callLogs, setCallLogs] = useState([]);
-  const [tokenRequested, setTokenRequested] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [sttLoading, setSttLoading] = useState(false);
-  const [sttText, setSttText] = useState('');
-  const [sttUrduTranscript, setSttUrduTranscript] = useState('');
-  const [sttEnglishTranscript, setSttEnglishTranscript] = useState('');
-  const [sttDetectedLanguage, setSttDetectedLanguage] = useState('');
-  const [sttRomanUrdu, setSttRomanUrdu] = useState('');
-  const [sttIntent, setSttIntent] = useState(null);
-  const [sttEmotion, setSttEmotion] = useState(null);
-  const [sttError, setSttError] = useState('');
-  const [answerMeta, setAnswerMeta] = useState({
-    answerSource: '',
-    answerSourceConfidence: null,
-    adminVerified: false,
-    responseTimeMs: null,
-    detectedIntent: '',
-    messageSource: '',
-  });
-  const [programQuery, setProgramQuery] = useState(null);
-  const [naturalResponse, setNaturalResponse] = useState('');
-  const [programInput, setProgramInput] = useState('');
-  const [programLoading, setProgramLoading] = useState(false);
-  const [programError, setProgramError] = useState('');
-  const [ttsLoading, setTtsLoading] = useState(false);
-  const [ttsError, setTtsError] = useState('');
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const monitorIntervalRef = useRef(null);
-  const voiceMetricsRef = useRef(null);
-  const answerAudioRef = useRef(null);
-  const answerAudioUrlRef = useRef(null);
+  const { isAuthenticated, isAdmin, loading, user } = useAuth();
 
-  // Check backend status on component mount
-  useEffect(() => {
-    checkBackendStatus();
-    fetchCallLogs();
-    // Poll for call logs every 10 seconds
-    const interval = setInterval(fetchCallLogs, 10000);
-    return () => clearInterval(interval);
+  const [locationPath, setLocationPath] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
+  const [backendStatus, setBackendStatus] = useState('checking');
+
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+
+  const [sttError, setSttError] = useState('');
+  const [ttsError, setTtsError] = useState('');
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [lastUserUtterance, setLastUserUtterance] = useState('');
+  const [lastAssistantResponse, setLastAssistantResponse] = useState('');
+  const [intentLabel, setIntentLabel] = useState('conversation');
+
+  const [conversationTurns, setConversationTurns] = useState([]);
+  const [historyLogs, setHistoryLogs] = useState([]);
+
+  const loadHistoryFromSupabase = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('call_history')
+        .select('id, created_at, duration_seconds, summary, intent, turn_count')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Could not load history from Supabase:', error.message);
+        return;
+      }
+
+      const mapped = (data || []).map((row) => ({
+        id: String(row.id),
+        timestamp: row.created_at,
+        from: 'Web User',
+        duration: `${row.duration_seconds || 0}s`,
+        summary: row.summary || 'Call completed',
+        intent: row.intent || 'general',
+        turnCount: row.turn_count || 0,
+      }));
+
+      setHistoryLogs(mapped);
+    } catch (error) {
+      console.warn('Supabase history load failed:', error);
+    }
+  }, [user?.id]);
+
+  const saveHistoryToSupabase = useCallback(async (entry) => {
+    if (!user?.id) return;
+
+    const durationSeconds = Number(String(entry.duration || '0').replace(/[^0-9]/g, '')) || 0;
+
+    try {
+      const { error } = await supabase.from('call_history').insert({
+        user_id: user.id,
+        duration_seconds: durationSeconds,
+        summary: entry.summary || null,
+        intent: entry.intent || null,
+        turn_count: entry.turnCount || 0,
+        metadata: {
+          from: entry.from || 'Web User',
+          timestamp: entry.timestamp,
+        },
+      });
+
+      if (error) {
+        console.warn('Could not save history to Supabase:', error.message);
+      }
+    } catch (error) {
+      console.warn('Supabase history save failed:', error);
+    }
+  }, [user?.id]);
+
+  const recognitionRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const shouldRestartRef = useRef(false);
+  const speechDetectedRef = useRef(false);
+  const latestChunkRef = useRef('');
+  const callStartRef = useRef(null);
+  const finalTranscriptRef = useRef('');
+  const interimTranscriptRef = useRef('');
+
+  const isCallActiveRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const isMutedRef = useRef(false);
+
+  const isAdminRoute = locationPath.startsWith('/admin');
+  const isAuthRoute = locationPath === '/login' || locationPath === '/signup';
+
+  const hasAdminSession = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    return window.sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
   }, []);
 
-  // Auto-request token when backend is ready (only once)
-  useEffect(() => {
-    if (backendStatus === 'ready' && !twilioToken && !tokenRequested) {
-      console.log('Backend ready, requesting initial token...');
-      setTokenRequested(true);
-      requestTwilioToken();
-    }
-  }, [backendStatus, twilioToken, tokenRequested]);
-
-  /**
-   * Check if backend API is running
-   */
-  const checkBackendStatus = async () => {
-    try {
-      const response = await fetch('http://localhost:8000/api/test/');
-      const data = await parseJsonResponse(response, 'Backend test endpoint returned non-JSON');
-      setBackendStatus(data.twilio_configured ? 'ready' : 'not-configured');
-    } catch (error) {
-      console.error('Backend check failed:', error);
-      setBackendStatus('offline');
-    }
-  };
-
-  /**
-   * Fetch call logs from backend
-   */
-  const fetchCallLogs = async () => {
-    try {
-      const response = await fetch('http://localhost:8000/api/call_logs/');
-      const data = await parseJsonResponse(response, 'Call logs endpoint returned non-JSON');
-      setCallLogs(data.calls || []);
-    } catch (error) {
-      console.error('Failed to fetch call logs:', error);
-    }
-  };
-
-  /**
-   * Request Twilio token from backend
-   */
-  const requestTwilioToken = async () => {
-    try {
-      console.log('Requesting Twilio token from backend...');
-      const response = await fetch('http://localhost:8000/api/generate_token/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ identity: 'web-user' }),
-      });
-      
-      console.log('Token response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-      
-      const data = await parseJsonResponse(response, 'Token endpoint returned non-JSON');
-      console.log('✓ Token received, length:', data.token ? data.token.length : 0);
-      setTwilioToken(data.token);
-      return data.token;
-    } catch (error) {
-      console.error('❌ Failed to get Twilio token:', error);
-      console.error('Please check backend configuration and ensure it is running.');
-      return null;
-    }
-  };
-
-  const detectAnswerLanguage = (text) => {
-    if (!text) {
-      return 'en';
-    }
-    return /[\u0600-\u06FF]/.test(text) ? 'ur' : 'en';
-  };
-
-  const formatResponseTime = (durationMs) => {
-    if (typeof durationMs !== 'number' || Number.isNaN(durationMs) || durationMs < 0) {
-      return null;
-    }
-
-    if (durationMs < 1000) {
-      return `${Math.round(durationMs)} ms`;
-    }
-
-    return `${(durationMs / 1000).toFixed(2)} s`;
-  };
-
-  const formatIntentLabel = (intentValue) => {
-    if (!intentValue) {
-      return '';
-    }
-
-    if (typeof intentValue === 'string') {
-      return intentValue;
-    }
-
-    if (typeof intentValue === 'object') {
-      const label = intentValue.label || intentValue.intent || intentValue.name || '';
-      const confidence = typeof intentValue.confidence === 'number' ? Math.round(intentValue.confidence * 100) : null;
-      return confidence !== null && label ? `${label} (${confidence}%)` : label;
-    }
-
-    return String(intentValue);
-  };
-
-  const buildNoAnswerMessage = (queryText) => {
-    const trimmedQuery = (queryText || '').trim();
-    if (trimmedQuery) {
-      return `I could not find a direct answer for "${trimmedQuery}". Please rephrase it or ask about fee, duration, admission, or scholarship.`;
-    }
-
-    return 'I could not find a direct answer. Please rephrase your question or ask about fee, duration, admission, or scholarship.';
-  };
-
-  const parseJsonResponse = async (response, fallbackMessage) => {
+  const parseJsonResponse = useCallback(async (response, fallbackMessage) => {
     const rawBody = await response.text();
     try {
       return JSON.parse(rawBody || '{}');
@@ -182,641 +122,490 @@ function App() {
         : `${fallbackMessage} (status ${response.status}).`;
       throw new Error(message);
     }
-  };
+  }, []);
 
-  const speakAnswer = async (answerText, languageHint = null) => {
-    const text = (answerText || '').trim();
-    if (!text) {
+  useEffect(() => {
+    isCallActiveRef.current = isCallActive;
+  }, [isCallActive]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  const handleNavigate = useCallback((nextPath) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', nextPath);
+    }
+    setLocationPath(nextPath);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => setLocationPath(window.location.pathname);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    setBackendStatus(SpeechRecognition ? 'ready' : 'offline');
+
+    if (typeof window !== 'undefined') {
+      const savedHistory = window.localStorage.getItem('mockCallHistory');
+      if (savedHistory) {
+        try {
+          setHistoryLogs(JSON.parse(savedHistory));
+        } catch (error) {
+          console.warn('Could not parse stored call history:', error);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistoryFromSupabase();
+  }, [loadHistoryFromSupabase]);
+
+  useEffect(() => {
+    return () => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+      window.speechSynthesis.cancel();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (error) {
+          console.warn('Recognition stop on unmount failed:', error);
+        }
+      }
+
+    };
+  }, []);
+
+  const cleanupSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, []);
+
+  const stopListening = useCallback(() => {
+    shouldRestartRef.current = false;
+    cleanupSilenceTimer();
+    setIsListening(false);
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (error) {
+        console.warn('Recognition stop failed:', error);
+      }
+    }
+  }, [cleanupSilenceTimer]);
+
+  const speakResponse = useCallback((responseText) => {
+    const text = (responseText || '').trim();
+    if (!text) return;
+
+    stopListening();
+    setIsSpeaking(true);
+    setTtsError('');
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      if (isCallActiveRef.current && !isMutedRef.current) {
+        setTimeout(() => {
+          if (isCallActiveRef.current && !isMutedRef.current) {
+            shouldRestartRef.current = true;
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+                setIsListening(true);
+              } catch (error) {
+                console.warn('Recognition restart failed:', error);
+              }
+            }
+          }
+        }, 180);
+      }
+    };
+
+    utterance.onerror = (event) => {
+      setIsSpeaking(false);
+      setTtsError(event.error || 'Speech synthesis failed');
+    };
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [stopListening]);
+
+  const handleSpeech = useCallback((event) => {
+    let finalText = '';
+    let interimText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const piece = event.results[i][0].transcript || '';
+      if (event.results[i].isFinal) {
+        finalText += `${piece} `;
+      } else {
+        interimText += `${piece} `;
+      }
+    }
+
+    const normalizedFinal = finalText.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim();
+    const normalizedInterim = interimText.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim();
+
+    if (normalizedFinal.length >= MIN_VALID_TEXT_LENGTH) {
+      finalTranscriptRef.current = `${finalTranscriptRef.current} ${normalizedFinal}`.trim();
+      speechDetectedRef.current = true;
+      latestChunkRef.current = finalTranscriptRef.current;
+    }
+
+    interimTranscriptRef.current = normalizedInterim;
+    const visibleTranscript = [finalTranscriptRef.current, interimTranscriptRef.current].filter(Boolean).join(' ').trim();
+    setLiveTranscript(visibleTranscript);
+
+    const candidate = (finalTranscriptRef.current || normalizedInterim).trim();
+    if (candidate.length >= MIN_VALID_TEXT_LENGTH) {
+      speechDetectedRef.current = true;
+      latestChunkRef.current = candidate;
+    }
+  }, []);
+
+  const processUserUtterance = useCallback(async (utterance) => {
+    const text = (utterance || '').trim();
+    if (text.length < MIN_VALID_TEXT_LENGTH || isProcessingRef.current || isSpeakingRef.current) {
       return;
     }
 
-    try {
-      setTtsLoading(true);
-      setTtsError('');
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    setIsListening(false);
+    setLastUserUtterance(text);
 
-      const response = await fetch('http://localhost:8000/api/text_to_speech/', {
+    try {
+      const response = await fetch('http://localhost:8000/api/program_query/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text,
-          language: languageHint || detectAnswerLanguage(text),
+          query: text,
+          emotion: 'neutral',
         }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = 'Text-to-speech failed';
-        try {
-          const data = await parseJsonResponse(response, 'Text-to-speech endpoint returned non-JSON');
-          errorMessage = data.error || errorMessage;
-        } catch (error) {
-          errorMessage = `Text-to-speech failed (${response.status})`;
-        }
-        throw new Error(errorMessage);
-      }
-
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-
-      if (!answerAudioRef.current) {
-        answerAudioRef.current = new Audio();
-      }
-
-      if (answerAudioUrlRef.current) {
-        URL.revokeObjectURL(answerAudioUrlRef.current);
-      }
-
-      answerAudioUrlRef.current = audioUrl;
-      answerAudioRef.current.src = audioUrl;
-      await answerAudioRef.current.play();
-    } catch (error) {
-      console.error('Answer TTS failed:', error);
-      setTtsError(error.message || 'Could not play answer audio.');
-    } finally {
-      setTtsLoading(false);
-    }
-  };
-
-  /**
-   * Send recorded audio to backend speech-to-text endpoint.
-   */
-  const transcribeAudio = async (audioBlob, voiceFeatures = null) => {
-    try {
-      setSttLoading(true);
-      setSttError('');
-      const requestStart = performance.now();
-
-      const formData = new FormData();
-      formData.append('file', audioBlob, 'speech.webm');
-      formData.append('language', 'auto');
-      if (voiceFeatures) {
-        formData.append('voice_features', JSON.stringify(voiceFeatures));
-      }
-
-      const response = await fetch('http://localhost:8000/api/speech_to_text/', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const rawBody = await response.text();
-      let data = {};
-      try {
-        data = JSON.parse(rawBody);
-      } catch (parseError) {
-        throw new Error(`Backend returned non-JSON response (status ${response.status}).`);
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Transcription failed');
-      }
-
-      setSttText(data.text || '');
-      setSttUrduTranscript(data.urdu_transcript || '');
-      setSttEnglishTranscript(data.english_transcript || '');
-      setSttDetectedLanguage(data.detected_language || 'unknown');
-      setSttRomanUrdu(data.roman_urdu || '');
-      setSttIntent(data.intent || null);
-      setSttEmotion(data.emotion || null);
-      const responseTimeMs = performance.now() - requestStart;
-      const resolvedProgramQuery = data.program_query || data.scholarship_query || data.admission_query || (data.program_data || data.scholarship_data || data.admission_data || data.natural_response
-        ? {
-            program_data: data.program_data || data.scholarship_data || data.admission_data || null,
-            scholarship_data: data.scholarship_data || null,
-            admission_data: data.admission_data || null,
-            natural_response: data.natural_response || '',
-            program_name: data.program_name || '',
-            level: data.level || '',
-            faculty: data.program_faculty || data.faculty || '',
-            scholarship_category: data.scholarship_category || '',
-            admission_summary: data.admission_data || null,
-            follow_up: data.follow_up || null,
-          }
-        : null);
-
-      setProgramQuery(resolvedProgramQuery);
-      const answerText = data.natural_response || (resolvedProgramQuery && resolvedProgramQuery.natural_response) || data.natural_response_raw || (data.found === false ? buildNoAnswerMessage(data.text || sttText) : '');
-      setNaturalResponse(answerText);
-      setAnswerMeta({
-        answerSource: data.answer_source || 'unknown',
-        answerSourceConfidence: typeof data.answer_source_confidence === 'number' ? data.answer_source_confidence : null,
-        adminVerified: Boolean(data.admin_verified),
-        responseTimeMs,
-        detectedIntent: formatIntentLabel(data.intent || data.intent_used || ''),
-        messageSource: 'Microphone transcript',
-      });
-      if (answerText) {
-        const ttsLang = data.detected_language || detectAnswerLanguage(answerText);
-        await speakAnswer(answerText, ttsLang);
-      }
-    } catch (error) {
-      console.error('Speech-to-text failed:', error);
-      setSttError(error.message || 'Speech-to-text failed');
-    } finally {
-      setSttLoading(false);
-    }
-  };
-
-  /**
-   * Manual text query for program responses.
-   */
-  const handleProgramQuery = async () => {
-    const query = programInput.trim();
-    if (!query) {
-      setProgramError('Please type a program question.');
-      return;
-    }
-
-    try {
-      setProgramLoading(true);
-      setProgramError('');
-      const requestStart = performance.now();
-
-      const formData = new FormData();
-      formData.append('query', query);
-      formData.append('emotion', (sttEmotion && sttEmotion.label) || 'neutral');
-
-      const response = await fetch('http://localhost:8000/api/program_query/', {
-        method: 'POST',
-        body: formData,
       });
 
       const data = await parseJsonResponse(response, 'Program query endpoint returned non-JSON');
       if (!response.ok) {
-        throw new Error(data.error || 'Program query failed');
+        throw new Error(data.error || 'Backend query failed');
       }
 
-      const responseTimeMs = performance.now() - requestStart;
+      const backendAnswer = data.natural_response || data.natural_response_raw || `You said: ${text}`;
+      const backendIntent = data.intent || data.intent_used || 'conversation';
+      const backendSource = data.answer_source || 'backend';
 
-      setProgramQuery({
-        program_data: data.program_data || null,
-        scholarship_data: data.scholarship_data || null,
-        admission_data: data.admission_data || null,
-        natural_response: data.natural_response || '',
-        program_name: data.program_name || '',
-        level: data.level || '',
-        faculty: data.faculty || '',
-        scholarship_category: data.scholarship_category || '',
-        admission_summary: data.admission_data || null,
-        follow_up: data.follow_up || null,
-        intent_used: data.intent || '',
-      });
-      const answerText = data.natural_response || data.natural_response_raw || (data.found === false ? buildNoAnswerMessage(query) : '');
-      setNaturalResponse(answerText);
-      setAnswerMeta({
-        answerSource: data.answer_source || 'unknown',
-        answerSourceConfidence: typeof data.answer_source_confidence === 'number' ? data.answer_source_confidence : null,
-        adminVerified: Boolean(data.admin_verified),
-        responseTimeMs,
-        detectedIntent: formatIntentLabel(data.intent || data.intent_used || ''),
-        messageSource: 'Typed question',
-      });
-      if (answerText) {
-        await speakAnswer(answerText, detectAnswerLanguage(answerText));
-      }
+      setIntentLabel(backendIntent);
+      setLastAssistantResponse(backendAnswer);
+      setConversationTurns((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          userText: text,
+          replyText: backendAnswer,
+          intent: backendIntent,
+          source: backendSource,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      speakResponse(backendAnswer);
     } catch (error) {
-      setProgramError(error.message || 'Failed to fetch program response');
-    } finally {
-      setProgramLoading(false);
-    }
-  };
+      console.error('Backend routing failed:', error);
+      console.error('Error details:', error.message, error.stack);
+      const fallback = `You said: ${text}. This is a fallback response because the backend did not return an answer.`;
+      setTtsError(`Backend error: ${error.message}` || 'Backend query failed');
+      setLastAssistantResponse(fallback);
+      setConversationTurns((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          userText: text,
+          replyText: fallback,
+          intent: 'fallback',
+          source: 'frontend_fallback',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
 
-  /**
-   * Toggle microphone recording for speech-to-text.
-   */
-  const handleMicClick = async () => {
-    if (isRecording && mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
+      speakResponse(fallback);
+    }
+
+    setIsProcessing(false);
+    isProcessingRef.current = false;
+  }, [parseJsonResponse, speakResponse]);
+
+  const detectSilence = useCallback(() => {
+    cleanupSilenceTimer();
+
+    silenceTimerRef.current = setTimeout(async () => {
+      if (!isCallActiveRef.current || isSpeakingRef.current || isProcessingRef.current) {
+        return;
+      }
+
+      const chunk = (latestChunkRef.current || '').trim();
+      const wordCount = chunk.split(/\s+/).filter(Boolean).length;
+      const hasMeaningfulSpeech = speechDetectedRef.current && chunk.length >= MIN_VALID_TEXT_LENGTH && wordCount >= 1;
+
+      if (!hasMeaningfulSpeech) {
+        return;
+      }
+
+      stopListening();
+      await processUserUtterance(chunk);
+      speechDetectedRef.current = false;
+      latestChunkRef.current = '';
+      finalTranscriptRef.current = '';
+      interimTranscriptRef.current = '';
+      setLiveTranscript('');
+    }, SILENCE_TIMEOUT_MS);
+  }, [cleanupSilenceTimer, processUserUtterance, stopListening]);
+
+  const startListening = useCallback(() => {
+    if (!isCallActiveRef.current || isSpeakingRef.current || isProcessingRef.current || isMutedRef.current) {
       return;
     }
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setSttError('Microphone is not supported in this browser.');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSttError('SpeechRecognition is not supported in this browser.');
       return;
     }
+
+    if (!recognitionRef.current) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = (event) => {
+        handleSpeech(event);
+
+        const merged = Array.from(event.results)
+          .map((result) => result[0]?.transcript || '')
+          .join(' ')
+          .trim();
+
+        const normalized = merged.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim();
+        const appearsVoiceLike = normalized.length >= MIN_VALID_TEXT_LENGTH;
+
+        if (appearsVoiceLike) {
+          detectSilence();
+        }
+      };
+
+      recognition.onerror = (event) => {
+        setIsListening(false);
+
+        if (event.error === 'no-speech' || event.error === 'audio-capture' || event.error === 'network') {
+          setSttError(`Speech recognition: ${event.error}`);
+        }
+
+        if (isCallActiveRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isMutedRef.current) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+              setIsListening(true);
+              setSttError('');
+            } catch (error) {
+              console.warn('Recognition recover start failed:', error);
+            }
+          }, 300);
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        if (shouldRestartRef.current && isCallActiveRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isMutedRef.current) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+              setIsListening(true);
+            } catch (error) {
+              console.warn('Recognition onend restart failed:', error);
+            }
+          }, 150);
+        }
+      };
+
+      recognitionRef.current = recognition;
+    }
+
+    shouldRestartRef.current = true;
+    speechDetectedRef.current = false;
+    latestChunkRef.current = '';
+    finalTranscriptRef.current = '';
+    interimTranscriptRef.current = '';
+    setSttError('');
 
     try {
-      setSttError('');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        if (monitorIntervalRef.current) {
-          clearInterval(monitorIntervalRef.current);
-          monitorIntervalRef.current = null;
-        }
-
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        stream.getTracks().forEach((track) => track.stop());
-
-        if (audioContextRef.current) {
-          try {
-            await audioContextRef.current.close();
-          } catch (e) {
-            console.warn('Audio context close failed:', e);
-          }
-          audioContextRef.current = null;
-        }
-
-        setIsRecording(false);
-
-        const metrics = voiceMetricsRef.current;
-        const voiceFeatures = metrics && metrics.samples > 0
-          ? {
-              rms_avg: metrics.rmsSum / metrics.samples,
-              rms_max: metrics.rmsMax,
-              peak_max: metrics.peakMax,
-              zcr_avg: metrics.zcrSum / metrics.samples,
-              samples: metrics.samples,
-            }
-          : null;
-
-        if (audioBlob.size > 0) {
-          await transcribeAudio(audioBlob, voiceFeatures);
-        } else {
-          setSttError('No audio captured. Please try again.');
-        }
-      };
-
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (AudioContextClass) {
-        const audioContext = new AudioContextClass();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
-
-        audioContextRef.current = audioContext;
-        analyserRef.current = analyser;
-        voiceMetricsRef.current = {
-          rmsSum: 0,
-          rmsMax: 0,
-          peakMax: 0,
-          zcrSum: 0,
-          samples: 0,
-        };
-
-        const sampleBuffer = new Float32Array(analyser.fftSize);
-        monitorIntervalRef.current = setInterval(() => {
-          if (!analyserRef.current || !voiceMetricsRef.current) {
-            return;
-          }
-
-          analyserRef.current.getFloatTimeDomainData(sampleBuffer);
-
-          let sumSquares = 0;
-          let peak = 0;
-          let zeroCrossings = 0;
-          for (let i = 0; i < sampleBuffer.length; i += 1) {
-            const v = sampleBuffer[i];
-            sumSquares += v * v;
-            if (Math.abs(v) > peak) {
-              peak = Math.abs(v);
-            }
-            if (i > 0 && ((sampleBuffer[i - 1] >= 0 && v < 0) || (sampleBuffer[i - 1] < 0 && v >= 0))) {
-              zeroCrossings += 1;
-            }
-          }
-
-          const rms = Math.sqrt(sumSquares / sampleBuffer.length);
-          const zcr = zeroCrossings / sampleBuffer.length;
-          const m = voiceMetricsRef.current;
-          m.rmsSum += rms;
-          m.zcrSum += zcr;
-          m.samples += 1;
-          if (rms > m.rmsMax) {
-            m.rmsMax = rms;
-          }
-          if (peak > m.peakMax) {
-            m.peakMax = peak;
-          }
-        }, 120);
-      }
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setSttText('');
-      setSttUrduTranscript('');
-      setSttEnglishTranscript('');
-      setSttDetectedLanguage('');
-      setSttRomanUrdu('');
-      setSttIntent(null);
-      setSttEmotion(null);
-      setAnswerMeta({
-        answerSource: '',
-        answerSourceConfidence: null,
-        adminVerified: false,
-        responseTimeMs: null,
-        detectedIntent: '',
-        messageSource: '',
-      });
-      setProgramQuery(null);
-      setNaturalResponse('');
+      recognitionRef.current.start();
+      setIsListening(true);
     } catch (error) {
-      console.error('Microphone access denied or failed:', error);
-      setSttError('Could not access microphone. Please allow microphone permission.');
+      if (!String(error?.message || '').includes('already started')) {
+        setSttError('Could not start recognition. Please allow microphone permissions.');
+      }
     }
-  };
+  }, [detectSilence, handleSpeech]);
+
+  const startVoiceCall = useCallback(() => {
+    setIsCallActive(true);
+    isCallActiveRef.current = true;
+    setIsMuted(false);
+    setSttError('');
+    setTtsError('');
+    setLiveTranscript('');
+    setLastUserUtterance('');
+    setLastAssistantResponse('');
+    setConversationTurns([]);
+    callStartRef.current = Date.now();
+    startListening();
+  }, [startListening]);
+
+  const endVoiceCall = useCallback(async () => {
+    const startedAt = callStartRef.current || Date.now();
+    const durationSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+
+    setIsCallActive(false);
+    isCallActiveRef.current = false;
+    setIsListening(false);
+    setIsProcessing(false);
+    setIsSpeaking(false);
+    cleanupSilenceTimer();
+    stopListening();
+    window.speechSynthesis.cancel();
+
+    if (conversationTurns.length > 0) {
+      const summaryText = conversationTurns[conversationTurns.length - 1].replyText || 'Call completed';
+      const lastTurn = conversationTurns[conversationTurns.length - 1];
+      const detectedIntent = lastTurn?.intent || intentLabel || 'general';
+      
+      const newEntry = {
+        id: `${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        from: 'Web User',
+        duration: `${durationSec}s`,
+        summary: summaryText,
+        intent: detectedIntent,
+        turnCount: conversationTurns.length,
+      };
+
+      setHistoryLogs((prev) => {
+        const updated = [newEntry, ...prev];
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('mockCallHistory', JSON.stringify(updated));
+        }
+        return updated;
+      });
+
+      saveHistoryToSupabase(newEntry);
+    }
+  }, [cleanupSilenceTimer, conversationTurns, stopListening, intentLabel, saveHistoryToSupabase]);
+
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      if (next) {
+        stopListening();
+      } else if (isCallActiveRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
+        setTimeout(() => startListening(), 120);
+      }
+      return next;
+    });
+  }, [startListening, stopListening]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#131313', color: '#e5e2e1' }}>
+        <div>
+          <h2>Loading...</h2>
+          <p>Please wait while we initialize your session</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (locationPath === '/login' && !isAuthenticated) {
+    return <Login />;
+  }
+
+  if (locationPath === '/signup') {
+    return <Signup />;
+  }
+
+  if (isAuthRoute && isAuthenticated) {
+    window.location.href = '/dashboard';
+    return null;
+  }
+
+  if (!isAuthenticated && !isAdminRoute && locationPath !== '/login' && locationPath !== '/signup') {
+    return <Login />;
+  }
+
+  if (isAdminRoute) {
+    if (locationPath === '/admin' || locationPath === '/admin/') {
+      handleNavigate('/admin/login');
+      return null;
+    }
+
+    if (locationPath === '/admin/login') {
+      return <AdminApp pathname={locationPath} onNavigate={handleNavigate} />;
+    }
+
+    if (!hasAdminSession()) {
+      handleNavigate('/admin/login');
+      return null;
+    }
+
+    return <AdminApp pathname={locationPath} onNavigate={handleNavigate} />;
+  }
+
+  const callPhase = isSpeaking ? 'speaking' : isProcessing ? 'processing' : isListening ? 'listening' : isCallActive ? 'active' : 'idle';
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>🤖 GenCall AI</h1>
-        <p>AI-Powered Call Management System</p>
-        <div className={`status-badge ${backendStatus}`}>
-          Backend: {backendStatus === 'ready' ? '✓ Ready' : 
-                   backendStatus === 'checking' ? '⌛ Checking...' : 
-                   backendStatus === 'not-configured' ? '⚠ Not Configured' :
-                   '✗ Offline'}
-        </div>
-      </header>
-
-      <main className="App-main">
-        {/* Home page speech-to-text card */}
-        <div className="card">
-          <h2>🎤 Speech To Text (Auto Urdu/English)</h2>
-          <p className="stt-help-text">
-            Click the mic, speak in Urdu or English, then click again to convert speech to text.
-          </p>
-
-          <div style={{ marginBottom: '16px' }}>
-            <h3 style={{ marginBottom: '8px' }}>💬 Ask Program Question (Text)</h3>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                placeholder="Example: fee of BS Computer Science"
-                value={programInput}
-                onChange={(e) => setProgramInput(e.target.value)}
-                style={{
-                  flex: '1 1 280px',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid #cfd8dc',
-                  fontSize: '14px',
-                }}
-              />
-              <button
-                className="btn btn-success"
-                onClick={handleProgramQuery}
-                disabled={programLoading}
-              >
-                {programLoading ? 'Checking...' : 'Get Answer'}
-              </button>
-            </div>
-            {programError && <p className="stt-error" style={{ marginTop: '8px' }}>{programError}</p>}
-            {ttsError && <p className="stt-error" style={{ marginTop: '8px' }}>{ttsError}</p>}
-          </div>
-
-          <button
-            className={`btn ${isRecording ? 'btn-danger' : 'btn-primary'}`}
-            onClick={handleMicClick}
-            disabled={sttLoading}
-          >
-            {isRecording ? '⏹ Stop Recording' : '🎙 Start Microphone'}
-          </button>
-
-          {sttLoading && <p className="stt-status">Transcribing audio...</p>}
-          {sttError && <p className="stt-error">{sttError}</p>}
-
-          {naturalResponse && (
-            <div style={{
-              backgroundColor: '#e8f5e9',
-              borderLeft: '5px solid #4caf50',
-              padding: '18px',
-              marginBottom: '18px',
-              borderRadius: '6px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}>
-              <h3 style={{ color: '#2e7d32', marginTop: 0, fontSize: '18px' }}>📋 Answer</h3>
-              <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#1b5e20', lineHeight: '1.6', marginBottom: '12px' }}>
-                {naturalResponse}
-              </p>
-              {(answerMeta.answerSource || answerMeta.responseTimeMs !== null) && (
-                <div style={{
-                  marginBottom: '12px',
-                  padding: '10px 12px',
-                  borderRadius: '6px',
-                  backgroundColor: '#f1f8f4',
-                  border: '1px solid #c8e6c9',
-                  fontSize: '13px',
-                  color: '#2e7d32',
-                }}>
-                  {answerMeta.answerSource && (
-                    <p style={{ margin: '4px 0' }}><strong>Source:</strong> {answerMeta.answerSource}</p>
-                  )}
-                  {answerMeta.messageSource && (
-                    <p style={{ margin: '4px 0' }}><strong>Message source:</strong> {answerMeta.messageSource}</p>
-                  )}
-                  {answerMeta.detectedIntent && (
-                    <p style={{ margin: '4px 0' }}><strong>Detected intent:</strong> {answerMeta.detectedIntent}</p>
-                  )}
-                  {typeof answerMeta.answerSourceConfidence === 'number' && (
-                    <p style={{ margin: '4px 0' }}><strong>Confidence:</strong> {Math.round(answerMeta.answerSourceConfidence * 100)}%</p>
-                  )}
-                  <p style={{ margin: '4px 0' }}><strong>Admin verified:</strong> {answerMeta.adminVerified ? 'Yes' : 'No'}</p>
-                  {formatResponseTime(answerMeta.responseTimeMs) && (
-                    <p style={{ margin: '4px 0' }}><strong>Time taken:</strong> {formatResponseTime(answerMeta.responseTimeMs)}</p>
-                  )}
-                </div>
-              )}
-              <button
-                className="btn btn-success"
-                onClick={() => speakAnswer(naturalResponse, detectAnswerLanguage(naturalResponse))}
-                disabled={ttsLoading}
-                style={{ marginBottom: '12px' }}
-              >
-                {ttsLoading ? '🔊 Speaking...' : '🔊 Speak Answer'}
-              </button>
-              {programQuery && programQuery.program_data && (
-                <div style={{ marginTop: '15px', fontSize: '14px', color: '#333', backgroundColor: '#f1f8f4', padding: '12px', borderRadius: '4px' }}>
-                  {programQuery.program_data.program && (
-                    <p style={{ margin: '6px 0' }}><strong>🎓 Program:</strong> {programQuery.program_data.program}</p>
-                  )}
-                  {programQuery.program_data.level && (
-                    <p style={{ margin: '6px 0' }}><strong>📚 Level:</strong> {programQuery.program_data.level}</p>
-                  )}
-                  {!programQuery.program_data.level && programQuery.level && (
-                    <p style={{ margin: '6px 0' }}><strong>📚 Level:</strong> {programQuery.level}</p>
-                  )}
-                  {(programQuery.program_data.faculty || programQuery.faculty) && (
-                    <p style={{ margin: '6px 0' }}><strong>🏫 Faculty:</strong> {programQuery.program_data.faculty || programQuery.faculty}</p>
-                  )}
-                  {programQuery.program_data.admission_fee && (
-                    <p style={{ margin: '6px 0' }}><strong>💳 Admission Fee:</strong> {programQuery.program_data.admission_fee}</p>
-                  )}
-                  {programQuery.program_data.semesters && (
-                    <p style={{ margin: '6px 0' }}><strong>⏱️ Duration:</strong> {programQuery.program_data.semesters} Semesters</p>
-                  )}
-                  {programQuery.program_data.total_fee && (
-                    <p style={{ margin: '6px 0' }}><strong>💰 Total Fee:</strong> {programQuery.program_data.total_fee}</p>
-                  )}
-                  {Array.isArray(programQuery.program_data.faculties) && programQuery.program_data.faculties.length > 0 && (
-                    <div style={{ marginTop: '8px' }}>
-                      <p style={{ margin: '6px 0', fontWeight: 'bold' }}>🏫 Faculties:</p>
-                      <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-                        {programQuery.program_data.faculties.map((f) => (
-                          <li key={f}>{f}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {Array.isArray(programQuery.program_data.programs) && programQuery.program_data.programs.length > 0 && (
-                    <div style={{ marginTop: '8px' }}>
-                      <p style={{ margin: '6px 0', fontWeight: 'bold' }}>🎓 Programs:</p>
-                      <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-                        {programQuery.program_data.programs.map((p, idx) => (
-                          <li key={`${p.program}-${idx}`}>{p.program}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {programQuery.program_data.policy_count !== undefined && (
-                    <div style={{ marginTop: '8px' }}>
-                      <p style={{ margin: '6px 0' }}><strong>🎓 Scholarship Policies:</strong> {programQuery.program_data.policy_count}</p>
-                      <p style={{ margin: '6px 0' }}><strong>🏷️ Categories:</strong> {programQuery.program_data.category_count}</p>
-                      {Array.isArray(programQuery.program_data.categories) && programQuery.program_data.categories.length > 0 && (
-                        <div>
-                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>📚 Available Categories:</p>
-                          <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-                            {programQuery.program_data.categories.map((item) => (
-                              <li key={item}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {Array.isArray(programQuery.program_data) && programQuery.scholarship_category && (
-                    <div style={{ marginTop: '8px' }}>
-                      <p style={{ margin: '6px 0', fontWeight: 'bold' }}>🎓 Scholarship Category:</p>
-                      <p style={{ margin: '6px 0' }}>{programQuery.scholarship_category}</p>
-                      <p style={{ margin: '6px 0', fontWeight: 'bold' }}>📄 Policy Rows:</p>
-                      <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-                        {programQuery.program_data.map((policy, idx) => (
-                          <li key={`${policy.category}-${idx}`}>
-                            {policy.category} - {policy.criteria}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {programQuery.admission_data && !Array.isArray(programQuery.admission_data) && (
-                    <div style={{ marginTop: '8px' }}>
-                      <p style={{ margin: '6px 0' }}><strong>🏫 University:</strong> {programQuery.admission_data.university || 'N/A'}</p>
-                      {programQuery.admission_data.admission_open !== undefined && (
-                        <p style={{ margin: '6px 0' }}><strong>📢 Admission Open:</strong> {programQuery.admission_data.admission_open}</p>
-                      )}
-                      {programQuery.admission_data.intakes && (
-                        <p style={{ margin: '6px 0' }}><strong>🗓️ Intakes:</strong> {programQuery.admission_data.intakes}</p>
-                      )}
-                      {programQuery.admission_data.required_documents && (
-                        <div style={{ marginTop: '8px' }}>
-                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>📄 Required Documents:</p>
-                          <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-                            {programQuery.admission_data.required_documents.map((doc) => (
-                              <li key={doc}>{doc}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {programQuery.admission_data.deadlines && (
-                        <div style={{ marginTop: '8px' }}>
-                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>⏳ Deadlines:</p>
-                          <p style={{ margin: '6px 0' }}>Spring: {programQuery.admission_data.deadlines.spring_last_date || 'N/A'}</p>
-                          <p style={{ margin: '6px 0' }}>Fall: {programQuery.admission_data.deadlines.fall_last_date || 'N/A'}</p>
-                        </div>
-                      )}
-                      {programQuery.admission_data.eligibility && (
-                        <div style={{ marginTop: '8px' }}>
-                          <p style={{ margin: '6px 0', fontWeight: 'bold' }}>✅ Eligibility:</p>
-                          <p style={{ margin: '6px 0' }}>Qualification: {programQuery.admission_data.eligibility.minimum_qualification || 'N/A'}</p>
-                          <p style={{ margin: '6px 0' }}>Marks: {programQuery.admission_data.eligibility.minimum_marks || 'N/A'}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-              {programQuery && programQuery.follow_up && (
-                <div style={{ marginTop: '10px', padding: '10px', background: '#fff8e1', borderLeft: '4px solid #ffb300', borderRadius: '4px' }}>
-                  <strong>Next Step:</strong> {programQuery.follow_up.type === 'choose_level' && 'Please choose one level: Associate, Undergraduate, or Postgraduate.'}
-                  {programQuery.follow_up.type === 'choose_faculty' && 'Please choose a faculty from the list above.'}
-                  {programQuery.follow_up.type === 'choose_scholarship_category' && 'Please ask about a scholarship category like Merit, Alumni, Kinship, Sports, Talent, Corporate, or Loan.'}
-                </div>
-              )}
-            </div>
-          )}
-
-          {sttText && (
-            <div className="stt-result">
-              <h3>Transcribed Text</h3>
-              <p>{sttText}</p>
-              <p><strong>Detected Language:</strong> {sttDetectedLanguage}</p>
-              {sttUrduTranscript && (
-                <>
-                  <h3>Urdu Transcript</h3>
-                  <p>{sttUrduTranscript}</p>
-                </>
-              )}
-              {sttEnglishTranscript && (
-                <>
-                  <h3>English Transcript</h3>
-                  <p>{sttEnglishTranscript}</p>
-                </>
-              )}
-              {sttIntent && (
-                <p>
-                  <strong>Intent:</strong> {formatIntentLabel(sttIntent) || 'unknown'}
-                </p>
-              )}
-              {sttEmotion && (
-                <p>
-                  <strong>Emotion:</strong> {sttEmotion.label || 'unknown'}
-                  {typeof sttEmotion.confidence === 'number' ? ` (${Math.round(sttEmotion.confidence * 100)}%)` : ''}
-                </p>
-              )}
-              {sttRomanUrdu && (
-                <>
-                  <h3>Roman Urdu</h3>
-                  <p>{sttRomanUrdu}</p>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Dashboard showing call status */}
-        <Dashboard 
-          callStatus={callStatus}
-          incomingCall={incomingCall}
-          backendStatus={backendStatus}
-        />
-
-        {/* Twilio Client for making calls */}
-        <TwilioClient
-          token={twilioToken}
-          onRequestToken={requestTwilioToken}
-          onCallStatusChange={setCallStatus}
-          onIncomingCall={setIncomingCall}
-          backendStatus={backendStatus}
-        />
-
-        {/* Call Logs */}
-        <CallLogs logs={callLogs} onRefresh={fetchCallLogs} />
-      </main>
-
-      <footer className="App-footer">
-        <p>GenCall AI © 2026 | Built with Django & React | Powered by Twilio</p>
-      </footer>
-    </div>
+    <DashboardNew
+      isCallActive={isCallActive}
+      callPhase={callPhase}
+      onStartCall={startVoiceCall}
+      onEndCall={endVoiceCall}
+      onToggleMute={toggleMute}
+      isMuted={isMuted}
+      lastUserUtterance={lastUserUtterance || liveTranscript}
+      lastAssistantResponse={lastAssistantResponse}
+      backendStatus={backendStatus}
+      sttDetectedLanguage={'en-US'}
+      sttIntentLabel={intentLabel}
+      sttEmotion={null}
+      sttLoading={isProcessing}
+      ttsLoading={isSpeaking}
+      sttError={sttError}
+      ttsError={ttsError}
+      turns={conversationTurns}
+      callLogs={historyLogs}
+    />
   );
 }
 
