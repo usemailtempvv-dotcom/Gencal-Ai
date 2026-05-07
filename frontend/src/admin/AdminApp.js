@@ -10,7 +10,6 @@ import {
   CheckCircle,
   ChevronDown,
   Code,
-  Cpu,
   Database,
   Download,
   Edit,
@@ -22,7 +21,6 @@ import {
   List,
   Lock,
   Mail,
-  MessageSquare,
   Moon,
   Play,
   Plus,
@@ -36,7 +34,6 @@ import {
   Upload,
   User,
   UserPlus,
-  Users,
   X,
   Clock,
   Info,
@@ -587,14 +584,12 @@ function UsersPage() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [selectedId, setSelectedId] = useState(null);
 
-  const filteredUsers = useMemo(() => {
-    return users.filter((user) => {
-      const matchesSearch = user.email.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesRole = roleFilter === 'All' || user.role === roleFilter;
-      const matchesStatus = statusFilter === 'All' || user.status === statusFilter;
-      return matchesSearch && matchesRole && matchesStatus;
-    });
-  }, [users, searchTerm, roleFilter, statusFilter]);
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch = user.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesRole = roleFilter === 'All' || user.role === roleFilter;
+    const matchesStatus = statusFilter === 'All' || user.status === statusFilter;
+    return matchesSearch && matchesRole && matchesStatus;
+  });
 
   const toggleStatus = (id) => {
     setUsers((current) => current.map((user) => (user.id === id ? { ...user, status: user.status === 'Active' ? 'Blocked' : 'Active' } : user)));
@@ -883,7 +878,7 @@ function AnalyticsPage() {
   const [level, setLevel] = useState('All');
   const [dateFilter, setDateFilter] = useState('today');
 
-  const filteredLogs = useMemo(() => logs.filter((log) => (category === 'All' || log.category === category) && (level === 'All' || log.level === level)), [logs, category, level]);
+  const filteredLogs = logs.filter((log) => (category === 'All' || log.category === category) && (level === 'All' || log.level === level));
 
   const levelIcon = (logLevel) => {
     if (logLevel === 'success') return <CheckCircle size={18} />;
