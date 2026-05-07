@@ -11,7 +11,7 @@ const MIN_VALID_TEXT_LENGTH = 3;
 const ADMIN_SESSION_KEY = 'admin_authenticated';
 
 function App() {
-  const { isAuthenticated, isAdmin, loading, user } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
 
   const [locationPath, setLocationPath] = useState(() => (typeof window !== 'undefined' ? window.location.pathname : '/'));
   const [backendStatus, setBackendStatus] = useState('checking');

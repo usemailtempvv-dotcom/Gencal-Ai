@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -7,7 +7,6 @@ import {
   BarChart3,
   Bell,
   BookOpen,
-  Brain,
   CheckCircle,
   ChevronDown,
   Code,
@@ -33,7 +32,6 @@ import {
   Sparkles,
   Sun,
   Trash2,
-  TrendingDown,
   TrendingUp,
   Upload,
   User,
@@ -65,37 +63,6 @@ import './admin.css';
 const ADMIN_EMAIL = 'umerazizgujjar009@gmail.com';
 const ADMIN_PASSWORD = 'Umer@0900';
 const ADMIN_SESSION_KEY = 'admin_authenticated';
-
-const usageData = [
-  { date: 'Mon', requests: 1200 },
-  { date: 'Tue', requests: 1800 },
-  { date: 'Wed', requests: 1600 },
-  { date: 'Thu', requests: 2100 },
-  { date: 'Fri', requests: 2400 },
-  { date: 'Sat', requests: 1900 },
-  { date: 'Sun', requests: 1500 },
-];
-
-const requestTypeData = [
-  { name: 'Text Generation', value: 45, color: '#3b82f6' },
-  { name: 'Coding Help', value: 30, color: '#8b5cf6' },
-  { name: 'Learning Help', value: 25, color: '#06b6d4' },
-];
-
-const recentActivity = [
-  { id: 1, user: 'john.doe@example.com', action: 'New Registration', time: '2 mins ago', status: 'success' },
-  { id: 2, user: 'sarah.smith@example.com', action: 'Model Update', time: '15 mins ago', status: 'info' },
-  { id: 3, user: 'mike.jones@example.com', action: 'Content Flagged', time: '1 hour ago', status: 'warning' },
-  { id: 4, user: 'emma.wilson@example.com', action: 'New Registration', time: '2 hours ago', status: 'success' },
-  { id: 5, user: 'david.brown@example.com', action: 'API Request', time: '3 hours ago', status: 'info' },
-];
-
-const kpiCards = [
-  { title: 'Total Users', value: '12,459', change: '+12.5%', trend: 'up', icon: Users, color: 'blue' },
-  { title: 'Active Sessions', value: '1,234', change: '+8.2%', trend: 'up', icon: Activity, color: 'green' },
-  { title: 'AI Model Status', value: 'Healthy', change: '99.8% uptime', trend: 'up', icon: Cpu, color: 'purple' },
-  { title: 'Total Requests', value: '87.5K', change: '-3.1%', trend: 'down', icon: MessageSquare, color: 'cyan' },
-];
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/admin/dashboard' },
