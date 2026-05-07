@@ -99,9 +99,7 @@ const kpiCards = [
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/admin/dashboard' },
-  { icon: Users, label: 'User Management', href: '/admin/dashboard/users' },
   { icon: FileText, label: 'Content Management', href: '/admin/dashboard/content' },
-  { icon: Brain, label: 'Model Training', href: '/admin/dashboard/training' },
   { icon: BarChart3, label: 'Logs & Analytics', href: '/admin/dashboard/analytics' },
   { icon: Settings, label: 'Settings', href: '/admin/dashboard/settings' },
 ];
@@ -178,9 +176,7 @@ function pathToPage(pathname) {
     return 'login';
   }
 
-  if (pathname.startsWith('/admin/dashboard/users')) return 'users';
   if (pathname.startsWith('/admin/dashboard/content')) return 'content';
-  if (pathname.startsWith('/admin/dashboard/training')) return 'training';
   if (pathname.startsWith('/admin/dashboard/analytics')) return 'analytics';
   if (pathname.startsWith('/admin/dashboard/settings')) return 'settings';
   return 'dashboard';
@@ -402,45 +398,155 @@ function AdminNavbar({ theme, toggleTheme, onNavigate }) {
 }
 
 function DashboardPage() {
+  const [callLogs, setCallLogs] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const loadCallLogs = async () => {
+      setIsLoading(true);
+      setDashboardError('');
+
+      try {
+        const response = await fetch('/api/call_logs/');
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || response.statusText || 'Unable to load backend call logs');
+        }
+        const data = await response.json();
+        const records = Array.isArray(data.calls) ? data.calls : [];
+
+        const formatted = records.map((entry) => ({
+          ...entry,
+          duration: Number(entry.duration) || 0,
+          timestamp: entry.timestamp || new Date().toISOString(),
+        }));
+
+        if (active) setCallLogs(formatted);
+      } catch (error) {
+        console.error('Dashboard call log fetch error:', error);
+        if (active) setDashboardError('Could not load call logs from the backend.');
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    loadCallLogs();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const formatDuration = (seconds) => {
+    const secs = Number(seconds) || 0;
+    const mins = Math.floor(secs / 60);
+    const remaining = secs % 60;
+    return `${mins}:${remaining.toString().padStart(2, '0')}`;
+  };
+
+  const totalCalls = callLogs.length;
+  const totalDuration = callLogs.reduce((sum, log) => sum + log.duration, 0);
+  const averageDuration = totalCalls ? Math.round(totalDuration / totalCalls) : 0;
+
+  const statusCounts = callLogs.reduce((acc, log) => {
+    const status = log.call_status || 'unknown';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  const statusChartData = Object.entries(statusCounts).map(([name, value], index) => ({
+    name,
+    value,
+    color: ['#3b82f6', '#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899'][index % 5],
+  }));
+
+  const callCountByDay = callLogs.reduce((acc, log) => {
+    const day = new Date(log.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    acc[day] = (acc[day] || 0) + 1;
+    return acc;
+  }, {});
+
+  const usageChartData = Object.entries(callCountByDay)
+    .map(([date, count]) => ({ date, requests: count }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
   return (
     <div className="admin-page">
       <div className="admin-page-header">
         <div>
           <h1 className="admin-page-title">Dashboard</h1>
-          <p className="admin-page-subtitle">Welcome back! Here's what's happening today.</p>
+          <p className="admin-page-subtitle">Live call log metrics from the Django backend.</p>
         </div>
       </div>
 
       <div className="admin-grid-4">
-        {kpiCards.map((card) => {
-          const Icon = card.icon;
-          const trendIcon = card.trend === 'up' ? <TrendingUp size={16} /> : <TrendingDown size={16} />;
-          return (
-            <div className="admin-card" key={card.title}>
-              <div className="admin-stat-row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                <div>
-                  <div className="admin-kpi-title">{card.title}</div>
-                  <h3 className="admin-kpi-value">{card.value}</h3>
-                  <div className="admin-kpi-change" style={{ color: card.trend === 'up' ? '#16a34a' : '#dc2626' }}>
-                    {trendIcon}
-                    <span>{card.change}</span>
-                  </div>
-                </div>
-                <div className={`admin-kpi-icon ${card.color}`}>
-                  <Icon size={24} />
-                </div>
+        <div className="admin-card">
+          <div className="admin-stat-row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div className="admin-kpi-title">Total Calls</div>
+              <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : totalCalls}</h3>
+              <div className="admin-kpi-change" style={{ color: '#16a34a' }}>
+                <TrendingUp size={16} />
+                <span>{totalCalls > 0 ? `${totalCalls} calls` : 'No calls yet'}</span>
               </div>
             </div>
-          );
-        })}
+            <div className="admin-kpi-icon blue"><Activity size={24} /></div>
+          </div>
+        </div>
+
+        <div className="admin-card">
+          <div className="admin-stat-row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div className="admin-kpi-title">Total Duration</div>
+              <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : formatDuration(totalDuration)}</h3>
+              <div className="admin-kpi-change" style={{ color: '#22c55e' }}>
+                <span>{totalDuration > 0 ? `${totalDuration} sec` : '0 sec'}</span>
+              </div>
+            </div>
+            <div className="admin-kpi-icon purple"><Clock size={24} /></div>
+          </div>
+        </div>
+
+        <div className="admin-card">
+          <div className="admin-stat-row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div className="admin-kpi-title">Average Duration</div>
+              <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : formatDuration(averageDuration)}</h3>
+              <div className="admin-kpi-change" style={{ color: '#38bdf8' }}>
+                <span>{averageDuration > 0 ? `${averageDuration} sec avg` : 'N/A'}</span>
+              </div>
+            </div>
+            <div className="admin-kpi-icon cyan"><TrendingUp size={24} /></div>
+          </div>
+        </div>
+
+        <div className="admin-card">
+          <div className="admin-stat-row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div className="admin-kpi-title">Backend Status</div>
+              <h3 className="admin-kpi-value">Django</h3>
+              <div className="admin-kpi-change" style={{ color: '#84cc16' }}>
+                <span>{dashboardError ? 'Error' : 'Connected'}</span>
+              </div>
+            </div>
+            <div className="admin-kpi-icon green"><Database size={24} /></div>
+          </div>
+        </div>
       </div>
+
+      {dashboardError && (
+        <div className="admin-card" style={{ marginTop: 20, borderColor: '#fca5a5', background: 'rgba(254, 202, 202, 0.12)' }}>
+          <p style={{ color: '#b91c1c', margin: 0 }}>{dashboardError}</p>
+        </div>
+      )}
 
       <div className="admin-grid-3" style={{ marginTop: 20 }}>
         <div className="admin-card" style={{ gridColumn: 'span 2' }}>
-          <h2 className="admin-section-title">Daily AI Usage</h2>
+          <h2 className="admin-section-title">Calls per Day</h2>
           <div className="admin-chart">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={usageData}>
+              <LineChart data={usageChartData.length ? usageChartData : [{ date: 'No data', requests: 0 }] }>
                 <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.15} />
                 <XAxis dataKey="date" stroke="#64748b" />
                 <YAxis stroke="#64748b" />
@@ -452,12 +558,12 @@ function DashboardPage() {
         </div>
 
         <div className="admin-card">
-          <h2 className="admin-section-title">Request Types</h2>
+          <h2 className="admin-section-title">Call Status Distribution</h2>
           <div className="admin-chart">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={requestTypeData} cx="50%" cy="50%" labelLine={false} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name}: ${Math.round((percent || 0) * 100)}%`}>
-                  {requestTypeData.map((entry) => (
+                <Pie data={statusChartData.length ? statusChartData : [{ name: 'No data', value: 1, color: '#64748b' }]} cx="50%" cy="50%" labelLine={false} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name}: ${Math.round((percent || 0) * 100)}%`}>
+                  {(statusChartData.length ? statusChartData : [{ name: 'No data', value: 1, color: '#64748b' }]).map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
                   ))}
                 </Pie>
@@ -470,34 +576,35 @@ function DashboardPage() {
 
       <div className="admin-card" style={{ marginTop: 20 }}>
         <div className="admin-row-between" style={{ marginBottom: 18 }}>
-          <h2 className="admin-section-title" style={{ margin: 0 }}>Recent Activity</h2>
+          <h2 className="admin-section-title" style={{ margin: 0 }}>Recent Calls</h2>
         </div>
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
-                <th>User</th>
-                <th>Action</th>
-                <th>Time</th>
+                <th>Caller</th>
                 <th>Status</th>
+                <th>Duration</th>
+                <th>Direction</th>
+                <th>Date</th>
               </tr>
             </thead>
             <tbody>
-              {recentActivity.map((activity) => (
-                <tr key={activity.id}>
-                  <td>
-                    <div className="admin-media-row">
-                      <div className="admin-avatar-sm">{activity.user.charAt(0).toUpperCase()}</div>
-                      <span>{activity.user}</span>
-                    </div>
-                  </td>
-                  <td>{activity.action}</td>
-                  <td style={{ color: '#6b7280' }}>{activity.time}</td>
-                  <td>
-                    <span className={`admin-badge ${activity.status}`}>{activity.status}</span>
-                  </td>
-                </tr>
-              ))}
+              {isLoading ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>Loading call logs...</td></tr>
+              ) : callLogs.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>No call logs available yet.</td></tr>
+              ) : (
+                callLogs.slice(0, 8).map((log) => (
+                  <tr key={log.call_sid || `${log.timestamp}-${log.from_number}`}>
+                    <td>{log.from_number || 'Unknown'}</td>
+                    <td>{log.call_status || 'Unknown'}</td>
+                    <td>{formatDuration(log.duration)}</td>
+                    <td>{log.direction || 'N/A'}</td>
+                    <td>{new Date(log.timestamp).toLocaleString()}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

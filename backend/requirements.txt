@@ -12,3 +12,4 @@ torch>=2.0.0
 safetensors>=0.4.1
 gTTS==2.5.4
 beautifulsoup4==4.12.3
+pandas
