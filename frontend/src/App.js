@@ -9,7 +9,11 @@ import { supabase, useAuth } from './contexts/AuthContext';
 const SILENCE_TIMEOUT_MS = 1600;
 const MIN_VALID_TEXT_LENGTH = 3;
 const ADMIN_SESSION_KEY = 'admin_authenticated';
-const BACKEND_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://gencal-ai-production.up.railway.app';
+const BACKEND_BASE_URL = process.env.REACT_APP_BACKEND_URL || (
+  typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? 'http://localhost:8000'
+    : 'https://gencal-ai-production.up.railway.app'
+);
 
 function App() {
   const { isAuthenticated, loading, user } = useAuth();

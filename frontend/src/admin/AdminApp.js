@@ -37,6 +37,7 @@ import {
   X,
   Clock,
   Info,
+  PhoneCall,
   Settings,
   Bold,
   Italic,
@@ -60,9 +61,15 @@ import './admin.css';
 const ADMIN_EMAIL = 'umerazizgujjar009@gmail.com';
 const ADMIN_PASSWORD = 'Umer@0900';
 const ADMIN_SESSION_KEY = 'admin_authenticated';
+const BACKEND_BASE_URL = process.env.REACT_APP_BACKEND_URL || (
+  typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? 'http://localhost:8000'
+    : 'https://gencal-ai-production.up.railway.app'
+);
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/admin/dashboard' },
+  { icon: PhoneCall, label: 'Twilio Calls', href: '/admin/dashboard/twilio' },
   { icon: FileText, label: 'Content Management', href: '/admin/dashboard/content' },
   { icon: BarChart3, label: 'Logs & Analytics', href: '/admin/dashboard/analytics' },
   { icon: Settings, label: 'Settings', href: '/admin/dashboard/settings' },
@@ -140,6 +147,7 @@ function pathToPage(pathname) {
     return 'login';
   }
 
+  if (pathname.startsWith('/admin/dashboard/twilio')) return 'twilio';
   if (pathname.startsWith('/admin/dashboard/content')) return 'content';
   if (pathname.startsWith('/admin/dashboard/analytics')) return 'analytics';
   if (pathname.startsWith('/admin/dashboard/settings')) return 'settings';
@@ -373,7 +381,7 @@ function DashboardPage() {
       setDashboardError('');
 
       try {
-        const response = await fetch('/api/call_logs/');
+        const response = await fetch(`${BACKEND_BASE_URL}/api/call_logs/`);
         if (!response.ok) {
           const message = await response.text();
           throw new Error(message || response.statusText || 'Unable to load backend call logs');
@@ -562,6 +570,205 @@ function DashboardPage() {
                 callLogs.slice(0, 8).map((log) => (
                   <tr key={log.call_sid || `${log.timestamp}-${log.from_number}`}>
                     <td>{log.from_number || 'Unknown'}</td>
+                    <td>{log.call_status || 'Unknown'}</td>
+                    <td>{formatDuration(log.duration)}</td>
+                    <td>{log.direction || 'N/A'}</td>
+                    <td>{new Date(log.timestamp).toLocaleString()}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TwilioCallsPage() {
+  const [callLogs, setCallLogs] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
+  const [twilioStatus, setTwilioStatus] = useState({ state: 'checking', configured: false, dbEnabled: false });
+  const [statusError, setStatusError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCallLogs = async () => {
+      setIsLoading(true);
+      setDashboardError('');
+
+      try {
+        const response = await fetch(`${BACKEND_BASE_URL}/api/call_logs/`);
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || response.statusText || 'Unable to load backend call logs');
+        }
+
+        const data = await response.json();
+        const records = Array.isArray(data.calls) ? data.calls : [];
+
+        const formatted = records.map((entry) => ({
+          ...entry,
+          duration: Number(entry.duration) || 0,
+          timestamp: entry.timestamp || new Date().toISOString(),
+          call_source: entry.call_source || 'twilio',
+        }));
+
+        if (active) setCallLogs(formatted);
+      } catch (error) {
+        console.error('Twilio call log fetch error:', error);
+        if (active) setDashboardError('Could not load Twilio call logs from the backend.');
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    loadCallLogs();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadTwilioStatus = async () => {
+      setStatusError('');
+
+      try {
+        const response = await fetch(`${BACKEND_BASE_URL}/api/test/`);
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || response.statusText || 'Unable to load backend status');
+        }
+
+        const data = await response.json();
+        if (active) {
+          setTwilioStatus({
+            state: data.twilio_configured ? 'connected' : 'disconnected',
+            configured: Boolean(data.twilio_configured),
+            dbEnabled: Boolean(data.twilio_db_enabled),
+          });
+        }
+      } catch (error) {
+        console.error('Twilio status fetch error:', error);
+        if (active) {
+          setStatusError('Could not verify the Twilio backend connection.');
+          setTwilioStatus({ state: 'error', configured: false, dbEnabled: false });
+        }
+      }
+    };
+
+    loadTwilioStatus();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const totalCalls = callLogs.length;
+  const twilioCalls = callLogs.filter((log) => (log.call_source || 'twilio') === 'twilio').length;
+  const inboundCalls = callLogs.filter((log) => (log.direction || '').toLowerCase() === 'inbound').length;
+  const totalDuration = callLogs.reduce((sum, log) => sum + (Number(log.duration) || 0), 0);
+
+  const connectionLabel = twilioStatus.state === 'connected'
+    ? (twilioStatus.dbEnabled ? 'Connected from admin config' : 'Connected from backend .env')
+    : twilioStatus.state === 'disconnected'
+      ? 'Twilio is not configured'
+      : twilioStatus.state === 'error'
+        ? 'Connection check failed'
+        : 'Checking connection...';
+
+  const formatDuration = (seconds) => {
+    const secs = Number(seconds) || 0;
+    const mins = Math.floor(secs / 60);
+    const remaining = secs % 60;
+    return `${mins}:${remaining.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="admin-page">
+      <div className="admin-page-header">
+        <div>
+          <h1 className="admin-page-title">Twilio Calls</h1>
+          <p className="admin-page-subtitle">Review incoming Twilio calls and their backend call source.</p>
+        </div>
+        <div className="admin-card" style={{ minWidth: 240, margin: 0, padding: 16, borderRadius: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              aria-label={twilioStatus.state === 'connected' ? 'Twilio connected' : 'Twilio disconnected'}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                background: twilioStatus.state === 'connected' ? '#22c55e' : twilioStatus.state === 'error' ? '#f59e0b' : '#ef4444',
+                boxShadow: twilioStatus.state === 'connected' ? '0 0 0 6px rgba(34, 197, 94, 0.15)' : '0 0 0 6px rgba(239, 68, 68, 0.12)',
+              }}
+            />
+            <div>
+              <div className="admin-kpi-title" style={{ marginBottom: 4 }}>Twilio Status</div>
+              <div className="admin-kpi-value" style={{ fontSize: 18, margin: 0 }}>
+                {twilioStatus.state === 'connected' ? 'Active' : twilioStatus.state === 'disconnected' ? 'Inactive' : twilioStatus.state === 'error' ? 'Error' : 'Checking...'}
+              </div>
+            </div>
+          </div>
+          <div className="admin-muted" style={{ marginTop: 10, fontSize: 13 }}>{connectionLabel}</div>
+          {statusError && <div style={{ marginTop: 8, color: '#b91c1c', fontSize: 13 }}>{statusError}</div>}
+        </div>
+      </div>
+
+      <div className="admin-grid-4">
+        <div className="admin-card">
+          <div className="admin-kpi-title">Total Calls</div>
+          <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : totalCalls}</h3>
+        </div>
+        <div className="admin-card">
+          <div className="admin-kpi-title">Twilio Calls</div>
+          <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : twilioCalls}</h3>
+        </div>
+        <div className="admin-card">
+          <div className="admin-kpi-title">Inbound Calls</div>
+          <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : inboundCalls}</h3>
+        </div>
+        <div className="admin-card">
+          <div className="admin-kpi-title">Total Duration</div>
+          <h3 className="admin-kpi-value">{isLoading ? 'Loading…' : formatDuration(totalDuration)}</h3>
+        </div>
+      </div>
+
+      {dashboardError && (
+        <div className="admin-card" style={{ marginTop: 20, borderColor: '#fca5a5', background: 'rgba(254, 202, 202, 0.12)' }}>
+          <p style={{ color: '#b91c1c', margin: 0 }}>{dashboardError}</p>
+        </div>
+      )}
+
+      <div className="admin-card" style={{ marginTop: 20 }}>
+        <div className="admin-row-between" style={{ marginBottom: 18 }}>
+          <h2 className="admin-section-title" style={{ margin: 0 }}>Recent Twilio Call Logs</h2>
+        </div>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Caller</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Direction</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>Loading Twilio call logs...</td></tr>
+              ) : callLogs.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>No Twilio call logs available yet.</td></tr>
+              ) : (
+                callLogs.slice(0, 10).map((log) => (
+                  <tr key={log.call_sid || `${log.timestamp}-${log.from_number}`}>
+                    <td>{log.from_number || 'Unknown'}</td>
+                    <td><span className="admin-badge blue">{log.call_source || 'twilio'}</span></td>
                     <td>{log.call_status || 'Unknown'}</td>
                     <td>{formatDuration(log.duration)}</td>
                     <td>{log.direction || 'N/A'}</td>
@@ -1081,6 +1288,7 @@ function DashboardShell({ pathname, onNavigate, theme, toggleTheme }) {
       <AdminNavbar theme={theme} toggleTheme={toggleTheme} onNavigate={onNavigate} />
       <div className="admin-content">
         {route === 'dashboard' && <DashboardPage />}
+        {route === 'twilio' && <TwilioCallsPage />}
         {route === 'users' && <UsersPage />}
         {route === 'content' && <ContentPage />}
         {route === 'training' && <TrainingPage />}
