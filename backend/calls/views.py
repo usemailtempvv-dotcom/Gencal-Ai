@@ -2722,7 +2722,8 @@ def incoming_call(request):
             from_number=from_number,
             to_number=to_number,
             call_status=call_status,
-            direction='inbound'
+            direction='inbound',
+            call_source='twilio'
         )
     except Exception as e:
         logger.error(f"Error saving call log: {str(e)}")
@@ -2798,6 +2799,7 @@ def get_call_logs(request):
             'to_number': log.to_number,
             'call_status': log.call_status,
             'direction': log.direction,
+            'call_source': log.call_source,
             'timestamp': log.timestamp.isoformat(),
             'duration': log.duration
         }

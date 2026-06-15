@@ -11,8 +11,8 @@ class CallLogAdmin(admin.ModelAdmin):
     """
     Admin interface for CallLog model.
     """
-    list_display = ['call_sid', 'from_number', 'to_number', 'call_status', 'direction', 'timestamp', 'duration']
-    list_filter = ['call_status', 'direction', 'timestamp']
+    list_display = ['call_sid', 'from_number', 'to_number', 'call_status', 'direction', 'call_source', 'timestamp', 'duration']
+    list_filter = ['call_status', 'direction', 'call_source', 'timestamp']
     search_fields = ['call_sid', 'from_number', 'to_number']
     readonly_fields = ['call_sid', 'timestamp']
     ordering = ['-timestamp']

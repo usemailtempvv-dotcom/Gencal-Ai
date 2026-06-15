@@ -9,11 +9,22 @@ class CallLog(models.Model):
     """
     Model to store call logs from Twilio.
     """
+    CALL_SOURCE_CHOICES = [
+        ('twilio', 'Twilio'),
+        ('browser', 'Browser'),
+    ]
+
     call_sid = models.CharField(max_length=100, unique=True, help_text="Twilio Call SID")
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
     to_number = models.CharField(max_length=20, help_text="Called phone number")
     call_status = models.CharField(max_length=50, help_text="Status of the call")
     direction = models.CharField(max_length=20, help_text="Call direction (inbound/outbound)")
+    call_source = models.CharField(
+        max_length=20,
+        choices=CALL_SOURCE_CHOICES,
+        default='twilio',
+        help_text='Where the call originated from',
+    )
     timestamp = models.DateTimeField(default=timezone.now, help_text="Time of call")
     duration = models.IntegerField(null=True, blank=True, help_text="Call duration in seconds")
     
@@ -21,7 +32,7 @@ class CallLog(models.Model):
         ordering = ['-timestamp']
         
     def __str__(self):
-        return f"Call from {self.from_number} to {self.to_number} at {self.timestamp}"
+        return f"Call from {self.from_number} to {self.to_number} via {self.call_source} at {self.timestamp}"
 
 
 class LearnedWebAnswer(models.Model):
