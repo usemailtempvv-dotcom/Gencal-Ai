@@ -47,3 +47,72 @@ class LearnedWebAnswer(models.Model):
     def __str__(self):
         status = 'verified' if self.admin_verified else 'pending'
         return f"{self.normalized_question[:60]} ({status})"
+
+
+class TwilioConfig(models.Model):
+    """Store Twilio credentials and runtime options editable via Django admin.
+
+    Only the most recently created/updated active config will be used by the views.
+    """
+    enabled = models.BooleanField(default=False, help_text='Enable Twilio incoming call handling')
+    account_sid = models.CharField(max_length=128, blank=True, default='', help_text='Twilio Account SID')
+    auth_token = models.CharField(max_length=128, blank=True, default='', help_text='Twilio Auth Token')
+    phone_number = models.CharField(max_length=32, blank=True, default='', help_text='Twilio phone number (E.164)')
+    twiml_app_sid = models.CharField(max_length=64, blank=True, default='', help_text='TwiML App SID for client tokens')
+    api_key_sid = models.CharField(max_length=128, blank=True, default='', help_text='Twilio API Key SID (for client tokens)')
+    api_key_secret = models.CharField(max_length=256, blank=True, default='', help_text='Twilio API Key Secret (for client tokens)')
+    greeting_text = models.TextField(blank=True, default='Hello! This is GenCall AI speaking. Thank you for calling us. We are excited to assist you today.', help_text='Message to speak to inbound callers')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        status = 'enabled' if self.enabled else 'disabled'
+        return f"Twilio config ({status}) updated {self.updated_at.isoformat()}"
+
+
+def get_active_twilio_config():
+    """Return dict of active Twilio config values, falling back to empty strings when missing.
+
+    Prefers the most recently updated TwilioConfig instance. If none exist, return empty values.
+    """
+    try:
+        cfg = TwilioConfig.objects.filter(enabled=True).order_by('-updated_at').first()
+        if not cfg:
+            cfg = TwilioConfig.objects.order_by('-updated_at').first()
+        if not cfg:
+            return {
+                'enabled': False,
+                'account_sid': '',
+                'auth_token': '',
+                'phone_number': '',
+                'twiml_app_sid': '',
+                'api_key_sid': '',
+                'api_key_secret': '',
+                'greeting_text': '',
+            }
+
+        return {
+            'enabled': bool(cfg.enabled),
+            'account_sid': cfg.account_sid or '',
+            'auth_token': cfg.auth_token or '',
+            'phone_number': cfg.phone_number or '',
+            'twiml_app_sid': cfg.twiml_app_sid or '',
+            'api_key_sid': cfg.api_key_sid or '',
+            'api_key_secret': cfg.api_key_secret or '',
+            'greeting_text': cfg.greeting_text or '',
+        }
+    except Exception:
+        return {
+            'enabled': False,
+            'account_sid': '',
+            'auth_token': '',
+            'phone_number': '',
+            'twiml_app_sid': '',
+            'api_key_sid': '',
+            'api_key_secret': '',
+            'greeting_text': '',
+        }

@@ -6,9 +6,42 @@ import logging
 import pandas as pd
 import os
 import re
+import csv
+import io
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
+
+
+def _read_quoted_csv(csv_path, encoding):
+    """Recover CSV files exported as a single quoted, comma-separated line."""
+    with open(csv_path, 'r', encoding=encoding, newline='') as handle:
+        rows = []
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            line = line.strip('`"')
+            reader = csv.reader(io.StringIO(line), skipinitialspace=True)
+            rows.append(next(reader))
+
+    if not rows:
+        return pd.DataFrame()
+
+    header = [str(value).strip().strip('"`') for value in rows[0]]
+    data_rows = rows[1:]
+    return pd.DataFrame(data_rows, columns=header)
+
+
+def _looks_fully_wrapped_csv(csv_path, encoding):
+    """Detect CSV exports where each record is wrapped in an extra quote/backtick pair."""
+    with open(csv_path, 'r', encoding=encoding, newline='') as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            return line.startswith('`"') or (line.startswith('"') and line.endswith('"'))
+    return False
 
 
 class ProgramDataRetriever:
@@ -40,7 +73,12 @@ class ProgramDataRetriever:
         last_error = None
         for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
             try:
-                return pd.read_csv(csv_path, encoding=enc)
+                if _looks_fully_wrapped_csv(csv_path, enc):
+                    return _read_quoted_csv(csv_path, enc)
+                df = pd.read_csv(csv_path, encoding=enc)
+                if len(df.columns) == 1 and ',' in str(df.columns[0]):
+                    df = _read_quoted_csv(csv_path, enc)
+                return df
             except Exception as e:
                 last_error = e
         raise last_error
@@ -321,7 +359,12 @@ class ScholarshipPolicyRetriever:
         last_error = None
         for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
             try:
-                return pd.read_csv(csv_path, encoding=enc)
+                if _looks_fully_wrapped_csv(csv_path, enc):
+                    return _read_quoted_csv(csv_path, enc)
+                df = pd.read_csv(csv_path, encoding=enc)
+                if len(df.columns) == 1 and ',' in str(df.columns[0]):
+                    df = _read_quoted_csv(csv_path, enc)
+                return df
             except Exception as e:
                 last_error = e
         raise last_error
@@ -508,7 +551,12 @@ class AdmissionPolicyRetriever:
         last_error = None
         for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
             try:
-                return pd.read_csv(csv_path, encoding=enc)
+                if _looks_fully_wrapped_csv(csv_path, enc):
+                    return _read_quoted_csv(csv_path, enc)
+                df = pd.read_csv(csv_path, encoding=enc)
+                if len(df.columns) == 1 and ',' in str(df.columns[0]):
+                    df = _read_quoted_csv(csv_path, enc)
+                return df
             except Exception as e:
                 last_error = e
         raise last_error
@@ -1026,3 +1074,177 @@ class HostalRetriever:
             })
         
         return overview
+
+
+class UniversityInfoRetriever:
+    """Retrieve university general information data from CSV."""
+
+    def __init__(self, csv_path='Data/University_info.csv'):
+        try:
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join('backend', csv_path)
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join(os.path.dirname(__file__), '..', csv_path)
+
+            self.df = self._read_csv_with_fallback(csv_path)
+            if not self.df.empty and len(self.df.columns) > 0:
+                # Handle case where columns might have special characters
+                cols = [str(c).strip() for c in self.df.columns]
+                # Rename to standard names if needed
+                if len(cols) >= 2:
+                    self.df.columns = ['field', 'details']
+                else:
+                    logger.warning('University info CSV has unexpected column structure')
+            logger.info(f"Loaded university info CSV with {len(self.df)} fields")
+        except Exception as e:
+            logger.error(f"Failed to load university info CSV: {str(e)}")
+            self.df = pd.DataFrame()
+
+    def _read_csv_with_fallback(self, csv_path):
+        import csv
+        last_error = None
+        for enc in ('utf-8', 'utf-8-sig', 'cp1252', 'latin1'):
+            try:
+                # Try normal pandas read first
+                try:
+                    df = pd.read_csv(csv_path, encoding=enc, on_bad_lines='skip', quotechar='"')
+                    if df.shape[1] >= 1:
+                        return df
+                except:
+                    pass
+                
+                # If normal parsing fails, try custom parsing with proper quoting
+                with open(csv_path, 'r', encoding=enc) as f:
+                    reader = csv.reader(f, quotechar='"', skipinitialspace=True)
+                    rows = []
+                    for row in reader:
+                        if row and len(row) > 0:  # Skip empty rows
+                            # Clean up the row
+                            cleaned_row = []
+                            for cell in row:
+                                cleaned_row.append(cell.strip())
+                            rows.append(cleaned_row)
+                
+                if rows and len(rows) > 0:
+                    # First row is headers
+                    headers = rows[0]
+                    
+                    # Make sure we have standard column names
+                    if len(headers) >= 2:
+                        if headers[0].lower() == 'field' or 'field' in headers[0].lower():
+                            col1 = 'field'
+                        else:
+                            col1 = headers[0] if headers[0] else 'field'
+                        
+                        if headers[1].lower() == 'details' or 'details' in headers[1].lower():
+                            col2 = 'details'
+                        else:
+                            col2 = headers[1] if headers[1] else 'details'
+                        
+                        headers = [col1, col2]
+                    
+                    # Remaining rows are data
+                    data_rows = []
+                    for row in rows[1:]:
+                        if len(row) >= 2:
+                            data_rows.append([row[0].strip(), ','.join(row[1:]).strip()])
+                        elif len(row) == 1:
+                            data_rows.append([row[0].strip(), ''])
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame(data_rows, columns=['field', 'details'])
+                    return df
+                    
+            except Exception as e:
+                last_error = e
+        
+        raise last_error if last_error else Exception("Could not parse CSV file")
+
+    def get_all_info(self):
+        """Get all university information as a dictionary."""
+        if self.df.empty:
+            return {}
+        
+        info = {}
+        for _, row in self.df.iterrows():
+            field = str(row.get('field', '') or '').strip()
+            details = str(row.get('details', '') or '').strip()
+            if field:
+                info[field] = details
+        
+        return info
+
+    def get_info_by_field(self, field):
+        """Get specific university information by field."""
+        if self.df.empty:
+            return None
+        
+        field_lower = str(field).strip().lower()
+        for _, row in self.df.iterrows():
+            row_field = str(row.get('field', '') or '').strip().lower()
+            if row_field == field_lower or field_lower in row_field:
+                return {
+                    'field': row['field'],
+                    'details': row['details'],
+                }
+        
+        return None
+
+    def get_university_name(self):
+        """Get university name."""
+        result = self.get_info_by_field('university_name')
+        return result['details'] if result else 'Superior University'
+
+    def get_university_type(self):
+        """Get university type (public/private, etc)."""
+        result = self.get_info_by_field('type')
+        return result['details'] if result else 'Unknown'
+
+    def get_mission(self):
+        """Get university mission."""
+        result = self.get_info_by_field('mission')
+        return result['details'] if result else 'Unknown'
+
+    def get_vision(self):
+        """Get university vision."""
+        result = self.get_info_by_field('vision')
+        return result['details'] if result else 'Unknown'
+
+    def get_values(self):
+        """Get university values."""
+        result = self.get_info_by_field('values')
+        return result['details'] if result else 'Unknown'
+
+    def get_program_levels(self):
+        """Get available program levels."""
+        result = self.get_info_by_field('program_levels')
+        if result:
+            # Split by comma and clean up
+            levels = [l.strip() for l in result['details'].split(',')]
+            return levels
+        return []
+
+    def get_learning_model(self):
+        """Get learning model/framework."""
+        result = self.get_info_by_field('learning_model')
+        return result['details'] if result else 'Unknown'
+
+    def search_info(self, query):
+        """Search university information by keyword."""
+        if self.df.empty:
+            return []
+        
+        query_lower = query.lower()
+        results = []
+        
+        for _, row in self.df.iterrows():
+            field_lower = str(row.get('field', '')).lower()
+            details_lower = str(row.get('details', '')).lower()
+            
+            if query_lower in field_lower or query_lower in details_lower:
+                results.append({
+                    'field': row['field'],
+                    'details': row['details'],
+                })
+        
+        return results

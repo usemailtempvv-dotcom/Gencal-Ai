@@ -31,25 +31,26 @@ class EntityExtractor:
         }
         
         # Abbreviation mappings for common program abbreviations
+        # Maps abbreviations to actual program names in the CSV
         self.abbreviations = {
-            'cs': 'Computer Science',
-            'it': 'Information Technology',
-            'se': 'Software Engineering',
-            'ai': 'Artificial Intelligence',
-            'ds': 'Data Science',
-            'bba': 'BBA',
+            'cs': 'BS Computer Science',  # Maps to actual program name
+            'it': 'BS Information Technology',
+            'se': 'BS Software Engineering',
+            'ai': 'BS Artificial Intelligence',
+            'ds': 'BS Data Science',
+            'bba': 'BBA (Hons.)',
             'bs': None,  # Generic BS prefix
             'bs commerce': 'BS Commerce',
-            'accounting': 'Accounting and Finance',
-            'fintech': 'FinTech',
-            'cyber security': 'Cyber Security',
-            'cybersecurity': 'Cyber Security',
-            'iiot': 'Internet of Things',
-            'iot': 'Internet of Things',
-            'digital marketing': 'Digital Marketing',
-            'e-commerce': 'E-Commerce',
-            'ecommerce': 'E-Commerce',
-            'banking': 'Islamic Banking and Finance',
+            'accounting': 'BS Accounting and Finance',
+            'fintech': 'BS FinTech',
+            'cyber security': 'BS Cyber Security',
+            'cybersecurity': 'BS Cyber Security',
+            'iiot': 'BS Internet of Things',
+            'iot': 'BS Internet of Things',
+            'digital marketing': 'BS Digital Marketing',
+            'e-commerce': 'BS E-Commerce',
+            'ecommerce': 'BS E-Commerce',
+            'banking': 'BS Islamic Banking and Finance',
         }
         
         # Level mappings
@@ -113,7 +114,7 @@ class EntityExtractor:
         
         for level, keywords in self.level_keywords.items():
             for keyword in keywords:
-                if keyword in text_lower:
+                if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
                     return level.capitalize()
         
         return None

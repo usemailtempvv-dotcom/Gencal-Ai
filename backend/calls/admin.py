@@ -3,6 +3,7 @@ Admin configuration for calls app.
 """
 from django.contrib import admin
 from .models import CallLog, LearnedWebAnswer
+from .models import TwilioConfig
 
 
 @admin.register(CallLog)
@@ -39,3 +40,23 @@ class LearnedWebAnswerAdmin(admin.ModelAdmin):
         return (obj.question_text[:80] + '...') if len(obj.question_text) > 80 else obj.question_text
 
     short_question.short_description = 'Question'
+
+
+@admin.register(TwilioConfig)
+class TwilioConfigAdmin(admin.ModelAdmin):
+    """Admin UI for configuring Twilio credentials and runtime options."""
+    list_display = ['__str__', 'enabled', 'phone_number', 'updated_at']
+    list_filter = ['enabled', 'updated_at']
+    search_fields = ['phone_number', 'account_sid', 'api_key_sid']
+    readonly_fields = ['created_at', 'updated_at']
+    fieldsets = (
+        (None, {
+            'fields': ('enabled', 'phone_number', 'greeting_text')
+        }),
+        ('Credentials', {
+            'fields': ('account_sid', 'auth_token', 'twiml_app_sid', 'api_key_sid', 'api_key_secret')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at')
+        }),
+    )

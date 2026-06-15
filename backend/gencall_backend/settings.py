@@ -2,15 +2,18 @@
 Django settings for gencall_backend project.
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from the backend directory first, then fall back to
+# the default search path if needed.
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 
 # Quick-start development settings - unsuitable for production

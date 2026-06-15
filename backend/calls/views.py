@@ -11,7 +11,7 @@ from rest_framework.decorators import parser_classes
 from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client
 from django.conf import settings
-from .models import CallLog, LearnedWebAnswer
+from .models import CallLog, LearnedWebAnswer, get_active_twilio_config
 from django.utils import timezone
 import logging
 import re
@@ -39,6 +39,17 @@ _facilities_retriever = None
 _hostal_retriever = None
 _local_hybrid_index = None
 _retrieval_cache_path = Path(__file__).resolve().parent.parent / 'Data' / 'retrieval_cache' / 'local_vector_cache.pkl'
+
+
+def _twilio_env_configured():
+    return bool(
+        settings.TWILIO_ACCOUNT_SID
+        and settings.TWILIO_AUTH_TOKEN
+        and settings.TWILIO_PHONE_NUMBER
+        and settings.TWIML_APP_SID
+        and settings.TWILIO_API_KEY_SID
+        and settings.TWILIO_API_KEY_SECRET
+    )
 
 def _get_program_services():
     """Get or initialize program query services."""
@@ -1147,6 +1158,10 @@ def _classify_primary_domain(text):
     facilities_count = sum(1 for k in facilities_keywords if k in q)
     hostel_count = sum(1 for k in hostel_keywords if k in q)
 
+    # Explicit scholarship keyword detection - prioritize if present
+    if 'scholarship' in q or 'financial aid' in q:
+        return 'scholarship'
+    
     # Campus domain
     if campus_count > 0 and campus_count >= admission_count and campus_count >= scholarship_count and campus_count >= program_count:
         return 'campus'
@@ -1389,6 +1404,16 @@ def _process_greeting_query(text):
     ]
 
     if not any(pattern in q for pattern in greeting_patterns):
+        return None
+
+    # Do not treat a query as a pure greeting if it also contains a domain-specific question.
+    domain_indicators = [
+        'scholarship', 'financial aid', 'admission', 'apply', 'program', 'course',
+        'degree', 'fee', 'tuition', 'deadline', 'campus', 'facility', 'hostel', 'hostal',
+        'documents', 'eligibility', 'salary', 'entry_test', 'merit', 'facility', 'library',
+        'transport', 'accommodation'
+    ]
+    if any(k in q for k in domain_indicators):
         return None
 
     if any(pattern in q for pattern in ['walaikum', 'assalamualaikum', 'assalam', 'salam']):
@@ -2262,6 +2287,43 @@ def _normalize_groq_model(model_name):
     return model_name
 
 
+def _primary_domain_from_groq_data_source(data_source):
+    """Map Groq NLU data_source values to local primary domain names."""
+    if not data_source:
+        return None
+
+    source = str(data_source).strip().lower()
+    mapping = {
+        'programs': 'programs',
+        'admission_policy': 'admission',
+        'scholarship_policy': 'scholarship',
+        'campuses_info': 'campus',
+        'facilities': 'facilities',
+        'hostal': 'hostel',
+        'university_info': 'programs',
+    }
+    return mapping.get(source)
+
+
+def _primary_domain_from_groq_intent(intent_label):
+    """Map Groq intent labels to local primary domain hints."""
+    if not intent_label:
+        return None
+
+    normalized = str(intent_label).strip().lower()
+    if 'scholarship' in normalized or 'financial aid' in normalized:
+        return 'scholarship'
+    if normalized.startswith('ask_admission') or 'admission' in normalized or 'apply_' in normalized or 'entry_test' in normalized or 'documents' in normalized:
+        return 'admission'
+    if 'campus' in normalized:
+        return 'campus'
+    if 'facility' in normalized or 'hostel' in normalized or 'hostal' in normalized:
+        return 'hostel' if 'hostel' in normalized or 'hostal' in normalized else 'facilities'
+    if 'program' in normalized or 'degree' in normalized or 'course' in normalized:
+        return 'programs'
+    return None
+
+
 def _clamp_confidence(value):
     """Convert confidence to float in [0,1]."""
     try:
@@ -2639,6 +2701,19 @@ def incoming_call(request):
     call_status = request.POST.get('CallStatus', '')
     
     logger.info(f"Incoming call from {from_number} to {to_number}, SID: {call_sid}")
+
+    # Load Twilio config from DB (admin-controlled)
+    tw_cfg = get_active_twilio_config()
+    twilio_enabled = bool(tw_cfg.get('enabled')) or _twilio_env_configured()
+    if not twilio_enabled:
+        # If Twilio handling is disabled in admin, respond with a minimal TwiML and do not proceed.
+        resp_disabled = VoiceResponse()
+        resp_disabled.say(
+            "The phone system is currently disabled. Please try again later.",
+            voice='alice',
+            language='en-US'
+        )
+        return HttpResponse(str(resp_disabled), content_type='text/xml')
     
     # Save call log to database
     try:
@@ -2655,12 +2730,11 @@ def incoming_call(request):
     # Create TwiML response
     response = VoiceResponse()
     
-    # Say greeting message using text-to-speech
-    response.say(
-        "Hello! This is GenCall AI speaking. Thank you for calling us. We are excited to assist you today.",
-        voice='alice',  # Use Alice voice (female, US English)
-        language='en-US'
+    # Say greeting message using configured greeting text (admin editable)
+    greeting = tw_cfg.get('greeting_text') or (
+        "Hello! This is GenCall AI speaking. Thank you for calling us. We are excited to assist you today."
     )
+    response.say(greeting, voice='alice', language='en-US')
     
     # You can add more actions here:
     # - response.gather() to collect DTMF input
@@ -2786,19 +2860,26 @@ def generate_token(request):
             actual_time = system_time - 36720000
             print(f"[Time Source] All APIs failed. Using corrected time: {actual_time} (system: {system_time})")
         
+        # Prefer DB-configured Twilio credentials, fall back to environment settings
+        tw_cfg = get_active_twilio_config()
+        account_sid = tw_cfg.get('account_sid') or settings.TWILIO_ACCOUNT_SID
+        api_key_sid = tw_cfg.get('api_key_sid') or settings.TWILIO_API_KEY_SID
+        api_key_secret = tw_cfg.get('api_key_secret') or settings.TWILIO_API_KEY_SECRET
+
         # Create access token with actual current time
         token = AccessToken(
-            settings.TWILIO_ACCOUNT_SID,
-            settings.TWILIO_API_KEY_SID,
-            settings.TWILIO_API_KEY_SECRET,
+            account_sid,
+            api_key_sid,
+            api_key_secret,
             identity=identity,
             ttl=3600,  # 1 hour
             nbf=actual_time  # Use actual current time
         )
         
         # Create a Voice grant and add to token
+        twiml_app_sid = tw_cfg.get('twiml_app_sid') or settings.TWIML_APP_SID
         voice_grant = VoiceGrant(
-            outgoing_application_sid=settings.TWIML_APP_SID,
+            outgoing_application_sid=twiml_app_sid,
             incoming_allow=True
         )
         token.add_grant(voice_grant)
@@ -2832,7 +2913,8 @@ def outgoing_call(request):
     """
     # Get the phone number to call from the request
     to_number = request.POST.get('To', '')
-    from_number = settings.TWILIO_PHONE_NUMBER
+    tw_cfg = get_active_twilio_config()
+    from_number = tw_cfg.get('phone_number') or settings.TWILIO_PHONE_NUMBER
     
     logger.info(f"Outgoing browser call to {to_number}")
     
@@ -2864,10 +2946,14 @@ def test_endpoint(request):
     """
     Simple test endpoint to verify the API is working.
     """
+    tw_cfg = get_active_twilio_config()
+    env_configured = bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN)
+    db_enabled = bool(tw_cfg.get('enabled') and tw_cfg.get('account_sid') and tw_cfg.get('auth_token'))
     return Response({
         'message': 'GenCall AI Backend is running!',
         'status': 'ok',
-        'twilio_configured': bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN)
+        'twilio_configured': db_enabled or env_configured,
+        'twilio_db_enabled': db_enabled,
     })
 
 
@@ -3185,6 +3271,19 @@ def speech_to_text(request):
                     inferred_program_intent = normalized_intent
                 program_query = _process_program_query(query_text, inferred_program_intent)
 
+        # Use Groq NLU domain hints when local routing has not created a program/admission/scholarship query.
+        if not program_query and not scholarship_query and not admission_query:
+            groq_primary_domain = _primary_domain_from_groq_data_source(data_source) or _primary_domain_from_groq_intent(groq_intent)
+            if groq_primary_domain == 'scholarship':
+                scholarship_intent = normalized_scholarship_intent or 'ask_scholarship_summary'
+                scholarship_query = _process_scholarship_query(query_text, scholarship_intent)
+            elif groq_primary_domain == 'admission':
+                admission_intent = normalized_admission_intent or 'ask_admission_summary'
+                admission_query = _process_admission_query(query_text, admission_intent)
+            elif groq_primary_domain == 'programs':
+                inferred_program_intent = normalized_intent or _infer_program_intent_from_profile(profile)
+                program_query = _process_program_query(query_text, inferred_program_intent)
+
         # Fallback routing when model intent is not in program intents but transcript is clearly a program query.
         if not program_query and not scholarship_query and not admission_query and text:
             fallback_text = (english_transcript or text).lower()
@@ -3373,6 +3472,12 @@ def program_query(request):
         # Comprehensive question understanding
         profile = _build_question_profile(clean_question)
         primary_domain = profile['primary_domain']
+
+        groq_primary_domain = _primary_domain_from_groq_data_source(data_source) or _primary_domain_from_groq_intent(detected_intent)
+        if groq_primary_domain and groq_primary_domain != primary_domain:
+            if not _has_structured_signal(profile) or primary_domain == 'programs':
+                primary_domain = groq_primary_domain
+
         fallback_query = None
 
         # Unknown/unstructured questions should use the local Groq fallback.
