@@ -9,6 +9,7 @@ import { supabase, useAuth } from './contexts/AuthContext';
 const SILENCE_TIMEOUT_MS = 1600;
 const MIN_VALID_TEXT_LENGTH = 3;
 const ADMIN_SESSION_KEY = 'admin_authenticated';
+const BACKEND_BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://gencal-ai-production.up.railway.app';
 
 function App() {
   const { isAuthenticated, loading, user } = useAuth();
@@ -297,7 +298,7 @@ function App() {
     setLastUserUtterance(text);
 
     try {
-      const response = await fetch('http://localhost:8000/api/program_query/', {
+      const response = await fetch(`${BACKEND_BASE_URL}/api/program_query/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
