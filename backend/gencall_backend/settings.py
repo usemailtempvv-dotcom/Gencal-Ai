@@ -25,7 +25,10 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-your-secret-key-her
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']  # Allow all hosts for ngrok testing
+ALLOWED_HOSTS = [
+    '*',
+    'gencal-ai-production.up.railway.app',
+]
 
 
 # Application definition
@@ -59,12 +62,22 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+    "https://gencal-ai-theta.vercel.app",
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 # Disable CSRF for Twilio webhooks
-CSRF_TRUSTED_ORIGINS = ['https://*.ngrok.io', 'https://*.ngrok-free.app']
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.ngrok.io',
+    'https://*.ngrok-free.app',
+    'https://gencal-ai-theta.vercel.app',
+    'https://*.vercel.app',
+]
 
 ROOT_URLCONF = 'gencall_backend.urls'
 
